@@ -419,3 +419,5 @@ input[type=text]{background:var(--graph);border:1px solid var(--line2);color:var
 body.superperf #hud *{text-shadow:none}
 body.superperf *{transition:none!important}
 .srow.dim{opacity:.4;pointer-events:none}
+/* messages on menu screens (purchases, saves): the in-match message box is hidden there */
+#mtoasts{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none}
