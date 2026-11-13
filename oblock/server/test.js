@@ -49,13 +49,14 @@ function client(token){
     B.send({ t:'buy', item:'att:scope25' }); const ba = await B.next('reject', m => m.what === 'buy'); ok(ba && /not enough cash/.test(ba.why), 'attachments cost cash too');
 
     console.log('rooms');
-    A.send({ t:'loadout', char:'cop', weapon:'sniper' }); B.send({ t:'loadout', char:'cop', weapon:'ar15' });
+    A.send({ t:'loadout', char:'cop', weapon:'sniper' }); B.send({ t:'loadout', char:'cop', look:{ jacket:'Red', pants:'Navy' }, weapon:'ar15' });
     A.send({ t:'create', settings:{ mode:'dm', botsOn:false, bots:0, kills:2, time:0 } }); const room = await A.next('room');
     ok(room && /^[A-Z0-9]{5}$/.test(room.code) && room.host === wa.id, 'create room returns a 5-character code', room);
     B.send({ t:'join', code:'ZZZZZ' }); const bad = await B.next('error'); ok(bad && /no room/.test(bad.why), 'joining a wrong code is refused');
     B.send({ t:'join', code:room.code }); const r2 = await B.next('room', m => m.players.length === 2);
     ok(r2 && r2.players.length === 2, 'second player joins by code');
-    ok(r2 && r2.players.find(p => p.id === wb.id).char === 'tracksuit', 'unowned character (Cop) is refused for the joiner');
+    ok(r2 && r2.players.find(p => p.id === wb.id).char === 'cop', 'private match: any character the host allows can be used (no purchase needed)');
+    ok(r2 && r2.players.find(p => p.id === wb.id).look.jacket === 'Red', 'outfit colours are shared with the room', r2 && r2.players.find(p => p.id === wb.id).look);
     B.send({ t:'settings', settings:{ mode:'backpack' } }); await sleep(200);
     A.send({ t:'settings', settings:{ mode:'dm', botsOn:false, bots:0, kills:2, time:0, difficulty:'nightmare' } }); const r3 = await B.next('room', m => m.settings.kills === 2);
     ok(r3 && r3.settings.mode === 'dm' && r3.settings.difficulty === 'normal', 'only the host changes settings; bad values are cleaned', r3 && r3.settings);
@@ -177,7 +178,7 @@ function client(token){
     D.send({ t:'devauth', pw:'nope' }); const d1 = await D.next('devauth'); ok(d1 && !d1.ok, 'a wrong password is refused');
     D.send({ t:'devauth', pw:'nope2' }); await D.next('devauth'); D.send({ t:'devauth', pw:'nope3' }); await D.next('devauth');
     D.send({ t:'devauth', pw:'test-dev-pass-123' }); const d2 = await D.next('devauth'); ok(d2 && !d2.ok && /wait/.test(d2.why), 'after 3 wrong tries even the right password has to wait', d2);
-    const E2 = await client('fifthplayer-xxxxxxxxx'); await E2.next('welcome');
+    const E2 = await client('fifthplayer-xxxxxxxxx'); const E2w = await E2.next('welcome'), E2id = E2w.id;
     E2.send({ t:'devauth', pw:'test-dev-pass-123' }); const d3 = await E2.next('devauth'); ok(d3 && d3.ok, 'the right password (server DEV_PASSWORD) signs in');
     E2.send({ t:'dev', cmd:'addCash', arg:250 }); const d4 = await E2.next('profile'); ok(d4 && d4.profile.cash === 250, 'signed-in developer commands are accepted and applied by the server', d4 && d4.profile);
     E2.send({ t:'create', settings:{ mode:'dm', botsOn:false, bots:0, kills:0, time:0 } }); const gr = await E2.next('room');
@@ -185,7 +186,42 @@ function client(token){
     E2.send({ t:'start' }); await D.next('start'); E2.send({ t:'glass', id:7 }); const gm = await D.next('glass');
     ok(gm && gm.id === 7, 'a shot-out window is sent to the other players');
     E2.send({ t:'glass', id:7 }); const gdup = await D.next('glass', () => true, 400); ok(!gdup, 'the same window is only broken once');
+    console.log('knife (server knows when you switch to it)');
+    put(D, [0, 0, 0]); put(E2, [0, 0, 1.5]); await sleep(250);
+    D.send({ t:'equip', w:'knife' }); await sleep(150); E2.drain('hit');
+    D.send({ t:'shot', w:'knife', o:[0,0,0], hits:[{ id:E2id, head:false, heavy:false, d:1.5 }] }); const kh = await E2.next('hit');
+    ok(kh && kh.dmg === S.weapons.knife.dmg, 'a knife stab deals damage online (' + S.weapons.knife.dmg + ')', kh);
     D.ws.close(); E2.ws.close();
+
+    console.log('Gang Wars (teams)');
+    const F = await client('gangplayer-one-aaaaaaa'), G = await client('gangplayer-two-bbbbbbb'); const fw = await F.next('welcome'), gw = await G.next('welcome');
+    F.send({ t:'create', settings:{ mode:'gang', botsOn:true, bots:2, kills:1, time:0 } }); const groom = await F.next('room');
+    ok(groom && groom.settings.mode === 'gang' && groom.settings.kills === 1, 'the host can pick Gang Wars', groom && groom.settings);
+    G.send({ t:'join', code:groom.code }); await G.next('room', m => m.players.length === 2);
+    F.send({ t:'start' }); const gs = await G.next('start');
+    const T = id => gs.ents.find(e => e.id === id).team;
+    ok(T(fw.id) !== T(gw.id) && gs.ents.filter(e => e.team === 0).length === 2 && gs.ents.filter(e => e.team === 1).length === 2, 'players and bots are split evenly into Red and Blue', gs.ents.map(e => [e.id, e.team]));
+    const mate = gs.ents.find(e => e.kind === 'bot' && e.team === T(fw.id)), fpos = gs.ents.find(e => e.id === fw.id).pos;
+    const dm = Math.hypot(mate.pos[0]-fpos[0], mate.pos[1]-fpos[1], mate.pos[2]-fpos[2]);
+    F.drain('hit'); G.drain('hit');
+    F.send({ t:'shot', w:'glock', o:fpos, hits:[{ id:mate.id, head:false, d:+dm.toFixed(2) }] }); const ff = await F.next('hit', m => m.target === mate.id, 600);
+    ok(!ff, 'no friendly fire: shooting your own gang does nothing');
+    put(F, [0, 0, 0]); put(G, [0, 0, 6]); await sleep(300);
+    let gend = null; for (let i = 0; i < 8 && !gend; i++){ await sleep(160); F.send({ t:'shot', w:'glock', o:[0,0,0], hits:[{ id:gw.id, head:true, d:6 }] }); gend = await G.next('end', () => true, 120); }
+    if (!gend) gend = await G.next('end', () => true, 1500);
+    ok(gend && gend.winner === 'team' + T(fw.id), 'the first gang to the kill limit wins', gend && gend.winner);
+    F.ws.close(); G.ws.close();
+
+    console.log('profile backup (survives a server restart / wiped disk)');
+    const seal = d4 && d4.profile.seal; ok(!!(seal && seal.d && seal.s), 'every profile update carries a signed backup');
+    const PORT2 = PORT + 1, PROF2 = PROFILES + '.2';
+    const srv2 = spawn(process.execPath, [path.join(__dirname, 'server.js')], { env:Object.assign({}, process.env, { PORT:PORT2, PROFILE_FILE:PROF2 }), stdio:'ignore' }); await sleep(700);
+    const raw = (token, restore) => new Promise(res => { const ws = new WebSocket('ws://127.0.0.1:' + PORT2); ws.on('open', () => ws.send(JSON.stringify({ t:'hello', token, name:'x', restore })));
+      ws.on('message', r => { const m = JSON.parse(r); if (m.t === 'welcome'){ ws.close(); res(m); } }); });
+    const stolen = await raw('somebody-else-zzzzzzzz', seal); ok(stolen && !stolen.restored && stolen.profile.cash === 0, 'someone else cannot use your backup');
+    const forged = await raw('fifthplayer-xxxxxxxxx', { d:seal.d.replace('"cash":250', '"cash":99999'), s:seal.s }); ok(forged && !forged.restored, 'an edited backup is refused');
+    const back = await raw('fifthplayer-xxxxxxxxx', seal); ok(back && back.restored && back.profile.cash === 250, 'after a wipe your cash and purchases come back', back && back.profile);
+    srv2.kill(); try { fs.unlinkSync(PROF2); } catch (e) {}
     A.ws.close(); B.ws.close();
     const log = fs.readFileSync(path.join(__dirname, 'devlog.jsonl'), 'utf8').trim().split('\n').length;
     ok(log >= 2, 'developer actions were written to devlog.jsonl');

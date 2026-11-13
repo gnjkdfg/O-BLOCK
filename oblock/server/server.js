@@ -41,8 +41,32 @@ const RESPAWN = 3.5, MAX_SPEED = 13;      // m/s (sprint 7.4 * nic 1.35 ≈ 10, 
 let profiles = {}; try { profiles = JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8')); } catch (e) {}
 let saveT = null; const saveProfiles = () => { clearTimeout(saveT); saveT = setTimeout(() => fs.writeFile(PROFILE_FILE, JSON.stringify(profiles), () => {}), 300); };
 const levelOf = xp => 1 + Math.floor(Math.max(0, xp) / S.prog.xpPerLevel);
-function profileOf(token){ const p = profiles[token] || (profiles[token] = { cash:0, xp:0, owned:{switch:false, jeff:false, cop:false}, paid:[], v6:true }); migrateV6(p); return p; }
-function pubProfile(p){ return { cash:p.cash, xp:p.xp, level:levelOf(p.xp), owned:p.owned }; }
+function profileOf(token){ const p = profiles[token] || (profiles[token] = { cash:0, xp:0, owned:{switch:false, jeff:false, cop:false}, paid:[], v6:true }); migrateV6(p);
+  Object.defineProperty(p, '_tok', { value:token, enumerable:false, configurable:true }); return p; }
+/* Profile backup. Free hosting (Render) wipes this server's disk whenever it restarts or wakes up, which used to erase
+   everyone's online cash, levels and purchases (Glock Switch, characters, attachments). So every profile update also
+   carries a SEAL: the profile signed by the server (HMAC-SHA256, bound to the player's token). The game keeps the latest
+   seal and hands it back when it connects; if this server lost the profile (or has an older one) it restores it.
+   A seal can't be edited or used by someone else. Set PROFILE_SECRET on the host to keep the signing key private. */
+const PROFILE_SECRET = process.env.PROFILE_SECRET || 'oblock-profile-seal-v1';
+const tokHash = t => crypto.createHash('sha256').update(String(t)).digest('hex').slice(0, 32);
+function sealOf(p){ if (!p._tok) return null; const d = JSON.stringify({ cash:p.cash, xp:p.xp, owned:p.owned, v:1 });
+  return { d, s:crypto.createHmac('sha256', PROFILE_SECRET).update(tokHash(p._tok) + '|' + d).digest('hex') }; }
+function restoreSeal(p, token, r){
+  try {
+    if (!r || typeof r.d !== 'string' || typeof r.s !== 'string' || r.d.length > 4000) return false;
+    const want = crypto.createHmac('sha256', PROFILE_SECRET).update(tokHash(token) + '|' + r.d).digest();
+    const got = Buffer.from(r.s, 'hex'); if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) return false;
+    const d = JSON.parse(r.d); if (!Number.isFinite(d.xp) || !Number.isFinite(d.cash) || typeof d.owned !== 'object') return false;
+    const pristine = p.xp === 0 && p.cash === 0 && !Object.values(p.owned || {}).some(Boolean);
+    if (!(d.xp > p.xp || pristine)) return false;            // XP only goes up, so an old seal can't undo a newer purchase
+    p.xp = Math.max(0, d.xp); p.cash = Math.max(0, d.cash); p.owned = Object.assign({ switch:false, jeff:false, cop:false }, d.owned); p.v6 = true;
+    saveProfiles(); return true;
+  } catch (e){ return false; }
+}
+function pubProfile(p){ return { cash:p.cash, xp:p.xp, level:levelOf(p.xp), owned:p.owned, seal:sealOf(p) }; }
+// outfit colours: just names from the game's colour lists (checked again by every client)
+const cleanLook = l => { l = l && typeof l === 'object' ? l : {}; const ok = v => typeof v === 'string' && /^[A-Za-z ]{1,16}$/.test(v); return { jacket:ok(l.jacket) ? l.jacket : 'Black', pants:ok(l.pants) ? l.pants : 'Black' }; };
 function canUse(p, w){ return !!S.weapons[w] && (S.prog.price[w] === undefined || !!(p && p.owned && p.owned[w])); }   // guns are free unless priced (AR-15 $10,000); attachments are bought
 // $25 (S.prog.cash.level) for every level gained; returns the cash paid
 function levelCash(p, xpBefore){ const d = levelOf(p.xp) - levelOf(xpBefore); if (d > 0){ p.cash += d * S.prog.cash.level; return d * S.prog.cash.level; } return 0; }
@@ -80,17 +104,17 @@ function falloff(w, d){ const f=w.falloff; if (!f) return 1; if (d<=f[0]) return
 // reduced (Off / Half / Normal), never raised, so a private room can't be used to farm XP or cash.
 const FIREARMS_ALL = Object.keys(S.weapons).filter(k => k !== 'knife'), CHARS_ALL = Object.keys(S.characters);
 function cleanSettings(x){
-  x = x || {}; const mode = x.mode === 'backpack' ? 'backpack' : 'dm';
+  x = x || {}; const mode = ['backpack','gang'].includes(x.mode) ? x.mode : 'dm';   // gang = Gang Wars (two teams)
   const pick = (v, list, def) => list.includes(v) ? v : def, int = (v, lo, hi, def) => Number.isFinite(+v) ? Math.max(lo, Math.min(hi, Math.round(+v))) : def;
   const bool = (v, def) => typeof v === 'boolean' ? v : def;
-  const allowedW = S.modes[mode].firearms;
+  const allowedW = S.modes[mode === 'gang' ? 'dm' : mode].firearms;
   let weapons = Array.isArray(x.weapons) ? x.weapons.filter(w => allowedW.includes(w)) : allowedW.slice(); if (!weapons.includes('glock')) weapons.unshift('glock');   // the starter pistol everyone owns is always allowed
   let chars = Array.isArray(x.chars) ? x.chars.filter(c => CHARS_ALL.includes(c)) : CHARS_ALL.slice(); if (!chars.includes('tracksuit')) chars.unshift('tracksuit');
   const botsOn = x.botsOn !== false && int(x.bots, 0, 12, 5) > 0;
   return { mode, name: String(x.name || 'O-Block room').replace(/[^\w .'!-]/g, '').slice(0, 24) || 'O-Block room',
     maxPlayers: int(x.maxPlayers, 2, 8, 8),
     bots: botsOn ? int(x.bots, 0, 12, 5) : 0, botsOn, difficulty: pick(x.difficulty, ['easy','normal','hard'], 'normal'),
-    time: int(x.time, 0, 3*3600, mode==='dm' ? 600 : 300), kills: int(x.kills, 0, 500, 20), tie: pick(x.tie, ['tie','deaths'], 'tie'),
+    time: int(x.time, 0, 3*3600, mode==='backpack' ? 300 : 600), kills: int(x.kills, 0, 500, mode==='gang' ? 40 : 20), tie: pick(x.tie, ['tie','deaths'], 'tie'),
     respawnOn: bool(x.respawnOn, true), respawnDelay: int(x.respawnDelay, 1, 15, 4),
     hp: int(x.hp, 50, 200, 100), stamina: int(x.stamina, 50, 200, 100),
     weapons, unlocks: pick(x.unlocks, ['levels','all'], 'levels'), startWeapon: pick(x.startWeapon, ['loadout','glock','random'], 'loadout'),
@@ -110,10 +134,10 @@ const newCode = () => { let c; do { c = Array.from({length:5}, () => 'ABCDEFGHJK
 function send(ws, m){ if (ws && ws.readyState === 1) ws.send(JSON.stringify(m)); }
 function broadcast(room, m, except){ const s = JSON.stringify(m); for (const c of room.clients) if (c !== except && c.readyState === 1) c.send(s); }
 function roomInfo(room){ return { t:'room', code:room.code, host:room.host.id, settings:room.settings, state:room.match ? 'playing' : 'lobby',
-  players:room.clients.map(c => ({ id:c.id, name:c.name, char:c.char, tag:c.tag||'', level:levelOf(c.profile.xp) })) }; }
+  players:room.clients.map(c => ({ id:c.id, name:c.name, char:c.char, look:c.look || cleanLook(), team:c.team, tag:c.tag||'', level:levelOf(c.profile.xp) })) }; }
 
 // ------------------------------------------------------------------ match simulation (authoritative state)
-function ent(id, kind, name, char, w, owner){ return { id, kind, name, char, w, owner, pos:[0,0,0], yaw:0, pitch:0, hp:100, alive:false, deadT:0, kills:0, deaths:0,
+function ent(id, kind, name, char, w, owner){ return { id, kind, name, char, w, gun:w, owner, pos:[0,0,0], yaw:0, pitch:0, hp:100, alive:false, deadT:0, kills:0, deaths:0,
   mag:S.weapons[w].mag, res:S.weapons[w].reserve, lastShot:0, reloadUntil:0, auto:false, ab:{active:0, ready:false}, bluntCap:false, beer:0, items:{blunt:0, beer:0, zyn:0}, lastSt:0, lastHurt:-99, streak:0, nic:0 }; }
 function maxHp(e){ const A = S.abilities[e.char]; return (e.baseHp || 100) * (e.bluntCap ? S.items.blunt.capMul : 1) * (A && A.hpMul && e.ab.active > 0 ? A.hpMul : 1); }
 function dmgMul(e){ const A = S.abilities[e.char]; return A && A.dmgMul && e.ab.active > 0 ? A.dmgMul : 1; }
@@ -122,23 +146,27 @@ function startMatch(room){
   const st = room.settings, M = { id: crypto.randomUUID(), clock:0, ents:new Map(), ended:false, za:null, searched:new Set(), glass:new Set(), carHops:{}, kills:{},
     rides:(S.rides || []).map(r => ({ id:r.id, kind:r.kind, x:r.x, y:0, z:r.z, yaw:r.yaw, lean:0, rider:null })) };
   for (const c of room.clients){
-    const p = c.profile, char = ownsChar(p, c.char) && st.chars.includes(c.char) ? c.char : 'tracksuit';
+    const p = c.profile, char = st.chars.includes(c.char) ? c.char : 'tracksuit';   // private match: any character the host allows
     const usable = st.weapons.filter(w => canUseIn(room, p, w));
     let w = st.startWeapon === 'glock' ? 'glock' : st.startWeapon === 'random' && usable.length ? usable[crypto.randomInt(usable.length)] : (usable.includes(c.weapon) ? c.weapon : usable[0]);
     if (!w || !st.weapons.includes(w)) w = 'glock';
-    const e = ent(c.id, 'player', c.name, char, w, c); e.baseHp = st.hp; M.ents.set(c.id, e); c.ent = e;
+    const e = ent(c.id, 'player', c.name, char, w, c); e.look = c.look || cleanLook(); e.baseHp = st.hp; M.ents.set(c.id, e); c.ent = e;
   }
   for (let i = 0; i < st.bots; i++){ const e = ent('b' + i, 'bot', 'BOT ' + (i+1), 'tracksuit', 'glock', room.host); e.baseHp = st.hp; M.ents.set(e.id, e); }
+  // Gang Wars: players alternate Red / Blue in join order, then each bot joins the smaller gang
+  if (st.mode === 'gang'){ M.teamKills = [0, 0]; const n = [0, 0];
+    for (const e of M.ents.values()){ const t = e.kind === 'player' ? (n[0] <= n[1] ? 0 : 1) : (n[0] <= n[1] ? 0 : 1); e.team = t; n[t]++; if (e.owner && e.kind === 'player') e.owner.team = t; } }
+  else for (const c of room.clients) c.team = undefined;
   if (st.mode === 'backpack'){ const h = zaHome(st); M.za = { x:h.x, y:h.y, z:h.z, carrier:null, holdStart:0, hold:{}, groundT:0, atHome:true, home:h }; }
   room.match = M;
   for (const e of M.ents.values()) respawn(room, e);
-  broadcast(room, { t:'start', matchId:M.id, settings:st, you:null, ents:[...M.ents.values()].map(e => ({ id:e.id, kind:e.kind, name:e.name, char:e.char, tag:e.kind==='player'?e.owner.tag||'':'', w:e.w, pos:e.pos, yaw:e.yaw, hp:e.hp, owner:e.owner.id })) });
+  broadcast(room, { t:'start', matchId:M.id, settings:st, you:null, ents:[...M.ents.values()].map(e => ({ id:e.id, kind:e.kind, name:e.name, char:e.char, look:e.look, team:e.team, tag:e.kind==='player'?e.owner.tag||'':'', w:e.w, pos:e.pos, yaw:e.yaw, hp:e.hp, owner:e.owner.id })) });
 }
 function spawnFor(room, e){
   const M = room.match, st = room.settings; let pool = S.spawns;
   if (st.mode === 'backpack' && st.spawns === 'far' && M.za){ const o = M.za.home; pool = S.spawns.slice().sort((a,b) => Math.hypot(b[0]-o.x,b[1]-o.z) - Math.hypot(a[0]-o.x,a[1]-o.z)).slice(0,8); }
   let best = pool[0], bs = -1e9;
-  for (const s of pool){ let minD = 80; for (const o of M.ents.values()) if (o !== e && o.alive) minD = Math.min(minD, Math.hypot(o.pos[0]-s[0], o.pos[2]-s[1]));
+  for (const s of pool){ let minD = 80; for (const o of M.ents.values()) if (o !== e && o.alive && (e.team === undefined || o.team !== e.team)) minD = Math.min(minD, Math.hypot(o.pos[0]-s[0], o.pos[2]-s[1]));
     const sc = minD + Math.random()*6; if (sc > bs){ bs = sc; best = s; } }
   return best;
 }
@@ -151,11 +179,12 @@ function releaseRide(room, e, at){
 }
 function respawn(room, e){
   const s = spawnFor(room, e); e.pos = [s[0], 0, s[1]]; e.yaw = s[2] || 0; e.alive = true; e.bluntCap = false; e.beer = 0; e.ab.active = 0; e.ab.ready = false;
-  e.hp = maxHp(e); e.mag = S.weapons[e.w].mag; e.res = S.weapons[e.w].reserve; e.reloadUntil = 0; e.lastSt = Date.now();
+  if (e.w === 'knife' && e.gun) e.w = e.gun; e.saved = {}; e.hp = maxHp(e); e.mag = S.weapons[e.w].mag; e.res = S.weapons[e.w].reserve; e.reloadUntil = 0; e.lastSt = Date.now();
   broadcast(room, { t:'respawn', id:e.id, pos:e.pos, yaw:e.yaw, hp:e.hp, w:e.w });
 }
 function damage(room, by, target, dmg, head, w){
   const M = room.match; if (!target.alive || M.ended) return;
+  if (by && by !== target && by.team !== undefined && by.team === target.team) return;    // Gang Wars: no friendly fire
   dmg = Math.round(dmg * (target.beer > 0 ? S.items.beer.dmgTaken : 1));
   target.hp = Math.max(0, target.hp - dmg); target.lastHurt = room.match.clock;
   broadcast(room, { t:'hit', by:by.id, target:target.id, dmg, hp:target.hp, head:!!head, max:maxHp(target) });
@@ -167,14 +196,18 @@ function kill(room, by, target, w, head){
     { const A = st.abilities && S.abilities[by.char]; if (A && !by.ab.active && !by.ab.ready && by.streak >= A.at){ by.ab.ready = true; broadcast(room, { t:'abready', id:by.id, name:A.name, streak:by.streak }); } }
     if (by.kind === 'player'){ const p = by.owner.profile, kx = Math.round(S.prog.xp.kill * st.xpMul), kc = Math.round(S.prog.cash.kill * st.cashMul); const xb = p.xp; p.xp += kx; p.cash += kc; const lc = levelCash(p, xb); M.kills[by.id] = (M.kills[by.id] || 0) + 1; saveProfiles(); send(by.owner, { t:'profile', profile:pubProfile(p), why:lc ? 'LEVEL UP' : 'KILL', xp:kx, cash:kc + lc }); } }
   if (M.za && M.za.carrier === target.id){ M.za.carrier = null; M.za.x = target.pos[0]; M.za.y = Math.max(0, target.pos[1]); M.za.z = target.pos[2]; M.za.groundT = 0; }
-  broadcast(room, { t:'kill', by:by ? by.id : null, target:target.id, w, head:!!head });
+  if (st.mode === 'gang' && by && by !== target && by.team !== undefined) M.teamKills[by.team]++;
+  broadcast(room, { t:'kill', by:by ? by.id : null, target:target.id, w, head:!!head, tk:M.teamKills || null });
   if (st.mode === 'dm' && st.kills > 0 && by && by.kills >= st.kills) return endMatch(room, by.id);
+  if (st.mode === 'gang' && st.kills > 0 && by && by.team !== undefined && M.teamKills[by.team] >= st.kills) return endMatch(room, 'team' + by.team);
   // respawns off: last one standing wins (Deathmatch); in Za the hold-time leader wins once one player is left
-  if (!st.respawnOn){ const alive = [...M.ents.values()].filter(x => x.alive); if (alive.length <= 1 && M.ents.size > 1){ const r = rows(room); endMatch(room, st.mode === 'dm' ? (alive[0] ? alive[0].id : 'TIE') : (r[0] ? r[0].id : 'TIE')); } }
+  if (!st.respawnOn){ const alive = [...M.ents.values()].filter(x => x.alive); if (alive.length <= 1 && M.ents.size > 1){ const r = rows(room); endMatch(room, st.mode === 'dm' ? (alive[0] ? alive[0].id : 'TIE') : (r[0] ? r[0].id : 'TIE')); }
+    // Gang Wars without respawns: the last gang with anyone standing wins
+    if (st.mode === 'gang'){ const teams = new Set([...M.ents.values()].filter(x => x.alive).map(x => x.team)); if (teams.size <= 1) return endMatch(room, teams.size ? 'team' + [...teams][0] : 'TIE'); } }
 }
 function rows(room){
   const M = room.match, st = room.settings;
-  const r = [...M.ents.values()].map(e => ({ id:e.id, name:e.name, kind:e.kind, kills:e.kills, deaths:e.deaths, hold:M.za ? +(M.za.hold[e.id] || 0).toFixed(1) : 0 }));
+  const r = [...M.ents.values()].map(e => ({ id:e.id, name:e.name, kind:e.kind, team:e.team, kills:e.kills, deaths:e.deaths, hold:M.za ? +(M.za.hold[e.id] || 0).toFixed(1) : 0 }));
   if (st.mode === 'backpack') r.sort((a,b) => b.hold - a.hold); else r.sort((a,b) => b.kills - a.kills || (st.tie === 'deaths' ? a.deaths - b.deaths : 0));
   return r;
 }
@@ -185,7 +218,7 @@ function endMatch(room, winnerId){
     const p = c.profile, e = M.ents.get(c.id); if (!e) continue;
     if (p.paid.includes(M.id)) continue;                                   // rewards: exactly once per match
     p.paid.push(M.id); p.paid = p.paid.slice(-50);
-    const place = r.findIndex(x => x.id === c.id) + 1, won = winnerId === c.id, lines = [];
+    const place = r.findIndex(x => x.id === c.id) + 1, won = winnerId === c.id || (e.team !== undefined && winnerId === 'team' + e.team), lines = [];
     const XM = room.settings.xpMul, CM = room.settings.cashMul, X = v => Math.round(v * XM), Cc = v => Math.round(v * CM);
     let xp = X(S.prog.xp.participation), cash = Cc(S.prog.cash.participation); lines.push({ label:'Participation', xp, cash });
     if (won){ const wx = X(room.settings.mode === 'backpack' ? (room.settings.variant === 'classic' ? S.prog.xp.holdWin : S.prog.xp.zaWin) : S.prog.xp.win); xp += wx; cash += Cc(S.prog.cash.win); lines.push({ label:'Victory', xp:wx, cash:Cc(S.prog.cash.win) }); }
@@ -215,10 +248,12 @@ function tick(room){
     else if (!z.atHome){ z.groundT += dt; if (st.respawn === 'reset' && z.groundT >= st.resetAfter){ const h = zaHome(st); Object.assign(z, { x:h.x, y:h.y, z:h.z, atHome:true, groundT:0, home:h }); } }
     if (st.variant === 'hold' && st.time > 0 && M.clock >= st.time){ const r = rows(room); const tie = r.length > 1 && Math.abs(r[0].hold - r[1].hold) < 0.05; return endMatch(room, !r.length || tie ? 'TIE' : r[0].id); }
   }
+  if (st.mode === 'gang' && st.time > 0 && M.clock >= st.time){ const k = M.teamKills; return endMatch(room, k[0] === k[1] ? 'TIE' : 'team' + (k[0] > k[1] ? 0 : 1)); }
   if (st.mode === 'dm' && st.time > 0 && M.clock >= st.time){ const r = rows(room); const tie = r.length > 1 && r[0].kills === r[1].kills && (st.tie !== 'deaths' || r[0].deaths === r[1].deaths); return endMatch(room, tie ? 'TIE' : r[0].id); }
   // snapshot: every entity, the bag, the clock
   broadcast(room, { t:'snap', clock:+M.clock.toFixed(2), ents:[...M.ents.values()].map(e => [e.id, +e.pos[0].toFixed(2), +e.pos[1].toFixed(2), +e.pos[2].toFixed(2), +e.yaw.toFixed(3), +e.pitch.toFixed(3), e.w, e.alive ? 1 : 0, Math.round(e.hp), e.kills, e.deaths, e.ab.active > 0 ? 1 : 0, e.flags || 0]),
     za:M.za ? { carrier:M.za.carrier, x:M.za.x, y:M.za.y, z:M.za.z, hold:M.za.hold, atHome:M.za.atHome } : null,
+    tk:M.teamKills || null,
     rides:M.rides.map(r => [r.id, +r.x.toFixed(2), +r.y.toFixed(2), +r.z.toFixed(2), +r.yaw.toFixed(3), +r.lean.toFixed(3), r.rider]) });
 }
 
@@ -286,10 +321,11 @@ function handle(ws, m){
       ws.token = token; ws.profile = profileOf(token); ws.dev = DEV_TOKENS.has(token);
       ws.name = String(m.name || 'PLAYER').replace(/[^\w .-]/g, '').slice(0, 16) || 'PLAYER';
       ws.tag = m.tag === 'DEV' ? 'DEV' : '';                // cosmetic name tag only — grants no developer rights
-      ws.char = ownsChar(ws.profile, m.char) ? m.char : 'tracksuit'; ws.weapon = typeof m.weapon === 'string' ? m.weapon : 'glock';
-      return send(ws, { t:'welcome', id:ws.id, profile:pubProfile(ws.profile), dev:ws.dev, version:S.version });
+      ws.char = CHARS_ALL.includes(m.char) ? m.char : 'tracksuit'; ws.look = cleanLook(m.look); ws.weapon = typeof m.weapon === 'string' ? m.weapon : 'glock';
+      const restored = restoreSeal(ws.profile, token, m.restore);
+      return send(ws, { t:'welcome', restored, id:ws.id, profile:pubProfile(ws.profile), dev:ws.dev, version:S.version });
     }
-    case 'loadout': { if (!ws.profile) return; if (ownsChar(ws.profile, m.char)) ws.char = m.char; if (S.weapons[m.weapon] && canUse(ws.profile, m.weapon)) ws.weapon = m.weapon; if (room) broadcast(room, roomInfo(room)); return; }
+    case 'loadout': { if (!ws.profile) return; if (CHARS_ALL.includes(m.char)) ws.char = m.char; if (m.look) ws.look = cleanLook(m.look); if (S.weapons[m.weapon] && canUse(ws.profile, m.weapon)) ws.weapon = m.weapon; if (room) broadcast(room, roomInfo(room)); return; }
     case 'create': {
       if (!ws.profile) return send(ws, { t:'error', why:'say hello first' }); leave(ws);
       const r = { code:newCode(), host:ws, clients:[ws], settings:cleanSettings(m.settings), match:null };
@@ -354,7 +390,12 @@ function handle(ws, m){
       const W = S.weapons[who.w]; if (W.kind === 'melee' || who.reloadUntil || who.mag >= W.mag || who.res <= 0) return;
       who.reloadUntil = M.clock + W.reloadTime * 0.95; return;
     }
-    case 'equip': { if (!M || !e || !S.weapons[m.w]) return; if (m.w !== 'knife' && (!canUseIn(room, ws.profile, m.w) || !room.settings.weapons.includes(m.w) || room.settings.startWeapon === 'glock' && m.w !== 'glock')) return send(ws, { t:'reject', what:'equip', why:'locked or not allowed' }); if (m.w !== e.w){ e.w = m.w; if (m.w !== 'knife'){ e.mag = S.weapons[m.w].mag; e.res = S.weapons[m.w].reserve; } } return; }
+    case 'equip': { if (!M || !e || !S.weapons[m.w]) return; if (m.w !== 'knife' && (!canUseIn(room, ws.profile, m.w) || !room.settings.weapons.includes(m.w) || room.settings.startWeapon === 'glock' && m.w !== 'glock')) return send(ws, { t:'reject', what:'equip', why:'locked or not allowed' }); if (m.w !== e.w){
+        // each gun keeps its own ammo: switching to the knife and back no longer refills (or empties) the gun
+        e.saved = e.saved || {}; if (e.w !== 'knife') e.saved[e.w] = { mag:e.mag, res:e.res };
+        e.w = m.w; e.reloadUntil = 0; if (m.w !== 'knife') e.gun = m.w;
+        if (m.w !== 'knife'){ const sv = e.saved[m.w]; e.mag = sv ? sv.mag : S.weapons[m.w].mag; e.res = sv ? sv.res : S.weapons[m.w].reserve; }
+      } return; }
     case 'ability': {
       const who = m.id ? (room && room.host === ws && M ? M.ents.get(m.id) : null) : e; if (!M || !who || !who.alive) return;
       // unlocked only by a server-counted kill streak (A.at in a row, reset on death); one activation per unlock; lasts until death
