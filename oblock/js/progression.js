@@ -17,9 +17,8 @@ const PROG = {
   xp:   { kill:100, win:250, participation:50, objective:100, objectiveCap:5, holdWin:250, zaWin:250 },
   cash: { win:100, kill:10, second:50, third:25, participation:10, level:25 },   // level: paid for every level gained
   carHop: { chance:1/3, min:1, max:20, cooldown:120 },          // per vehicle, seconds
-  unlock: {},                             // (Update 6) no level locks any more: guns and attachments are bought with cash
+  unlock: {},                             // no level locks: every gun is free, attachments are bought with cash
   price:  { switch:500, jeff:1000, cop:5000,
-            drako:250, sniper:500, shotgun:750, ar15:1250,                                  // guns (the Glock and knife are free)
             'att:dot_open':100, 'att:dot_closed':125, 'att:scope15':200, 'att:scope25':300, 'att:vgrip':100, 'att:brace':125,
             'att:skeleton':150, 'att:folding':175, 'att:suppressor':250, 'att:compensator':125, 'att:laser':75, 'att:flashlight':75,
             'att:mag_ext':150, 'att:mag_drum':300 },                                       // attachments: bought once, fit every gun they're made for
@@ -54,7 +53,7 @@ const ProfileAuthority = {
   level(){ return levelOf(this.s.xp); },
   levelProgress(){ const x=this.s.xp%PROG.xpPerLevel; return {cur:x, need:PROG.xpPerLevel, k:x/PROG.xpPerLevel}; },
   price(item){ return PROG.price[item]; },
-  canUse(id){ return id==='knife' || id==='glock' || this.owns(id); },                     // guns: owned (bought), not level-locked
+  canUse(id){ return !!WEAPON_DEFS[id]; },                                                 // every gun is free (no levels, no price)
   ownsAtt(a){ return !a || PROG.price['att:'+a]===undefined || this.owns('att:'+a); },
   owns(item){ return !!this.s.owned[item]; },
   ownsChar(id){ return !CHARACTERS[id] || !CHARACTERS[id].price || this.owns(id); },

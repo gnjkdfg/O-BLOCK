@@ -245,7 +245,6 @@ const Lobby = {
         break;
       case 'loadout':
         row('Weapons allowed', checks('weapons', MODE_RULES[S.mode].firearms.map(w=>[w,WEAPON_DEFS[w].name])), 'the knife is always allowed');
-        row('Weapon unlocks', drop('unlocks',[['levels','Only guns each player owns'],['all','Every gun free in this room']]));
         row('Starting weapon', drop('startWeapon',[['loadout','Each player\'s loadout'],['glock','Glock only'],['random','Random allowed weapon']]));
         row('Characters allowed', checks('chars', CHAR_ORDER.map(c=>[c,CHARACTERS[c].name])), 'others play as Masked Tracksuit');
         row('Consumables', toggle('items'), 'trunk loot, blunt, beer, Zyn');
