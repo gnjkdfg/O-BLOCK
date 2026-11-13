@@ -99,11 +99,27 @@ const RM = (x, z) => [RMv(x), RMv(z)];
 const DEFAULT_BINDS = Object.fromEntries(ACTIONS.map(a=>[a[0],a[2]]));
 const Binds = Object.assign({}, DEFAULT_BINDS, Store.get('binds', {}));
 function saveBinds(){ Store.set('binds', Binds); }
+/* "Recommended controls": the developer's own setup, applied with one button in Settings → Controls.
+   Only the keys listed here change; anything not listed keeps the player's current key. (Fill in from the
+   developer menu's "Copy my controls".) */
+const RECOMMENDED_CONTROLS = {
+  binds:{forward:'KeyW',back:'KeyS',left:'KeyA',right:'KeyD',jump:'Space',sprint:'ShiftLeft',crouch:'KeyC',slide:'KeyC',prone:'KeyZ',
+         fire:'Mouse0',aim:'KeyE',reload:'KeyR',firearm:'Digit1',knife:'Digit2',firemode:'KeyB',interact:'KeyF',leanL:'KeyQ',leanR:'Digit3',
+         grenade:'KeyG',mine:'KeyX',smoke:'KeyH',beer:'KeyK',zyn:'KeyJ',nic:'KeyT',ability:'KeyY',flashlight:'KeyU',thermal:'KeyN',
+         camera:'KeyV',scoreboard:'Tab',loadout:'KeyL',pause:'KeyP'},
+  sens:1, leanMode:'toggle', crouchMode:'toggle',
+};
+function applyRecommendedControls(){
+  const R=RECOMMENDED_CONTROLS; if (!R) return false;
+  if (R.binds) for (const [a,c] of Object.entries(R.binds)) if (a in DEFAULT_BINDS) Binds[a]=c;
+  for (const k of ['sens','leanMode','crouchMode']) if (R[k]!==undefined) Settings[k]=R[k];
+  saveBinds(); saveSettings(); return true;
+}
 const Input = {
   down:{},                                  // code -> pressed
   held(action){ return !!this.down[Binds[action]]; },
   is(action, code){ return Binds[action]===code; },
   label(code){ if (!code) return '—'; if (code.startsWith('Mouse')) return ['Left click','Middle click','Right click'][+code.slice(5)]||code;
     return code.replace(/^Key/,'').replace(/^Digit/,'').replace('ShiftLeft','L-Shift').replace('ControlLeft','L-Ctrl').replace('ShiftRight','R-Shift').replace('ControlRight','R-Ctrl').replace('AltLeft','L-Alt'); },
-  conflicts(){ const m={}, out=[]; for (const [a] of ACTIONS){ const c=Binds[a]; if (!c) continue; if (m[c]) out.push([m[c],a,c]); else m[c]=a; } return out; },
+  conflicts(){ const m={}, out=[]; for (const [a] of ACTIONS){ const c=Binds[a]; if (!c) continue; if (m[c] && !(m[c]==='crouch' && a==='slide')) out.push([m[c],a,c]); else if (!m[c]) m[c]=a; } return out; },   // crouch + slide on one key is a deliberate combo (crouch, or slide while sprinting)
 };

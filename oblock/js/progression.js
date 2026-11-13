@@ -219,6 +219,7 @@ const Dev = {
       <div>Aim assist <select id="dv-aim"><option value="off">Off</option><option value="body">Aim lock (body)</option><option value="head">Head lock</option></select><small style="display:block">Locks on while you aim or shoot, to the nearest target you can see near the crosshair</small></div>
       <div><label><input id="dv-wall" type="checkbox" ${this.wall?'checked':''}> Wall hack (see players and bots through walls)</label></div>
       <div><label><input id="dv-tag" type="checkbox" ${Settings.devTag!==false?'checked':''}> Show DEV tag above my name</label></div>
+      <div><button data-c="copyControls">Copy my controls</button></div>
       <div><button data-c="night">Skip to night</button><button data-c="day">Skip to day</button></div>
       <div><button data-c="lock">Sign out</button><button data-c="close">Close</button></div>`;
     document.body.appendChild(p);
@@ -226,6 +227,10 @@ const Dev = {
     p.querySelectorAll('button').forEach(b=>b.onclick=()=>{ const c=b.dataset.c;
       if (c==='close') return p.remove();
       if (c==='lock'){ this.lock(); UI.toast('SIGNED OUT',''); return; }
+      if (c==='copyControls'){ const code='OBLOCK-CONTROLS '+JSON.stringify({binds:Binds, sens:Settings.sens, leanMode:Settings.leanMode, crouchMode:Settings.crouchMode});
+        const done=()=>UI.toast('CONTROLS COPIED · PASTE THEM TO CLAUDE','ok');
+        (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(done, ()=>{ prompt('Copy this:', code); });
+        return; }
       if (c==='night'){ Env.t=PERIOD_SECONDS*5+1; return; } if (c==='day'){ Env.t=PERIOD_SECONDS*2+1; return; }
       const arg = c==='setLevel'?v('dv-lvl') : c==='setXP'?v('dv-xp') : c==='addCash'?v('dv-cash') : undefined;
       const r=ProfileAuthority.dev(c,arg); UI.toast(r.ok?'DEV · '+c.toUpperCase():'DEV · '+r.why.toUpperCase(), r.ok?'ok':'warn'); p.remove(); this.toggle(); });

@@ -526,6 +526,10 @@ const UI = {
       slider('Mouse sensitivity','sens',0.2,3,0.05,v=>v.toFixed(2)+'×');
       seg('Lean (Q / E)','leanMode',[['hold','Hold'],['toggle','Toggle']]);
       seg('Crouch','crouchMode',[['hold','Hold'],['toggle','Toggle']],()=>{ P.crouchToggle=false; });
+      if (RECOMMENDED_CONTROLS){ const r=el('div','srow'); r.appendChild(el('label','','Recommended controls')); const s=el('div','seg'); const b=el('button','','APPLY');
+        b.onclick=()=>{ this.cancelCapture(); P.crouchToggle=false; P.leanToggle=0; applyRecommendedControls(); this.toast('RECOMMENDED CONTROLS APPLIED','ok'); this.buildSettings(); };
+        s.appendChild(b); r.appendChild(s); box.appendChild(r);
+        box.appendChild(el('p','hint','The developer\'s own key setup. Reset Controls puts the standard keys back.')); }
       this.buildBinds(box);
     }
     $('#set-back').onclick=()=>{ this.cancelCapture(); this.menuInfo(); Game.go(this.settingsReturn||'main'); };
