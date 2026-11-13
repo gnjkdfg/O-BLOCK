@@ -72,6 +72,7 @@ const Arsenal = {
   equip(id, instant){
     if (id!=='knife' && id!==this.firearm) return false;
     if (id===this.cur && this.state!=='switch') return false;
+    if (Net.inMatch) Net.send({t:'equip', w:id});   // the server must know you hold the knife, or it rejects every stab
     this.cancelReload(); Snd.autoStop();
     if (instant){ this.cur=id; this.refreshDef(); this.state='idle'; this.lowerK=0; VM.setWeapon(id); Bus.emit('weapon', id); return true; }
     this.pending=id; this.state='switch'; this.stateT=0; this.stateDur=0.36; this.ads=false; this.swing=0; Snd.switchW();
@@ -144,6 +145,7 @@ const Arsenal = {
   startSwing(heavy){
     const d=WEAPON_DEFS.knife; this.heavy=heavy; this.swingDur=heavy?0.7:0.42; this.swing=this.swingDur; this.swingHit=false;
     this.nextFire=performance.now()/1000+(heavy?d.heavyRate:d.rate); Snd.swing(); this.recoilP=0.3; useStamina(heavy?6:3);
+    KnifeLock.start();
   },
   fire(){
     const d=this.def, a=this.ammo[this.cur]; a.mag--;
@@ -231,7 +233,7 @@ function meleeHit(heavy){
   const d=WEAPON_DEFS.knife, eye=new V3(P.pos.x,P.pos.y+P.height-0.15,P.pos.z);
   const fwd=new V3(-Math.sin(P.yaw),0,-Math.cos(P.yaw));
   let best=null, bd=d.range+0.4;
-  for (const b of Bots.list.concat(Net.inMatch?Net.targets():[])){ if (!b.alive) continue;
+  for (const b of Bots.list.concat(Net.inMatch?Net.targets():[])){ if (!b.alive || !isEnemy(b)) continue;
     const c=b.chest(); const to=c.clone().sub(eye); const dist=to.length(); to.y=0; to.normalize();
     if (dist<bd && to.dot(fwd)>0.55 && lineOfSight(eye,c)){ bd=dist; best=b; } }
   if (best){

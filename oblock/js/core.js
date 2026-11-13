@@ -41,7 +41,7 @@ const DEFAULT_SETTINGS = {
   bob: 60,               // first-person head bob strength (0 = off)
   blur: 'off',          // motion blur: 'off' | 'subtle' | 'auto' (subtle on Medium/High)
   fov: 120,              // 60..120 (maxed by default)
-  aimAssist: 'normal',   // 'off' | 'normal' | 'strong': helps once you are already aiming at someone
+  aimAssist: 'on',       // 'off' | 'on': slight slowdown while your crosshair is already on someone (no pull / lock-on)
   botsFire: true,        // test bots shoot back
   showFps: true,
 };
@@ -51,6 +51,7 @@ if (!['none','cross','dotS','dotM','dotL'].includes(Settings.crosshair)) Setting
 Settings.fov = clamp(Math.round(+Settings.fov||120), 60, 120);
 // one-time: everyone starts on the widest first-person view and with aim assist on (both can be changed in Settings)
 if (!Store.get('fovMax', false)){ Settings.fov=120; if (!Settings.aimAssist) Settings.aimAssist='normal'; Store.set('settings', Settings); Store.set('fovMax', true); }
+if (Settings.aimAssist!=='off' && Settings.aimAssist!=='on') Settings.aimAssist='on';   // old Normal / Strong -> the new slight assist
 if (!['potato','low','med','high'].includes(Settings.quality)) Settings.quality='low';
 /* Performance helpers: one place that turns the settings into what each system should do.
    Super Performance Mode wins over everything; otherwise each option is used as chosen. */

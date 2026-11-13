@@ -1,3 +1,4 @@
+const GANGS = [{name:'RED GANG', col:'#ff4a3a'}, {name:'BLUE GANG', col:'#4aa8ff'}];   // Gang Wars teams
 'use strict';
 /* Online private matches (client side). Talks to the O-Block game server (server/server.js) over WebSocket.
    Nothing here decides anything: health, damage, kills, respawns, the bag, hold times, rewards, purchases and loot
@@ -10,14 +11,17 @@ const NET_DEFAULT_URL = 'wss://oblock-multiplayer.onrender.com';
 
 class RemoteEnt {
   constructor(d){
-    this.id=d.id; this.kind=d.kind; this.name=d.name; this.dev=d.tag==='DEV'; this.char=d.char; this.w=d.w; this.alive=true; this.hp=d.hp||100; this.kills=0; this.deaths=0;
+    this.id=d.id; this.kind=d.kind; this.name=d.name; this.dev=d.tag==='DEV'; this.team=d.team; this.char=d.char; this.w=d.w; this.alive=true; this.hp=d.hp||100; this.kills=0; this.deaths=0;
     this.pos=new V3(...(d.pos||[0,0,0])); this.tpos=this.pos.clone(); this.yaw=d.yaw||0; this.tyaw=this.yaw; this.pitch=0; this.vel=new V3(); this.crouch=false; this.speed=0;
-    this.rig=buildCharacter({char:CHARACTERS[d.char]?d.char:'tracksuit', jacket:pick(JACKET_COLORS)[0], pants:pick(PANTS_COLORS)[0]}); scene.add(this.rig.root); Thermal.tagBot(this.rig);
+    // the colours the player picked (sent by the server); bots wear the bot outfit
+    const L=d.look||{}, ok=(list,v)=>list.some(c=>c[0]===v);
+    this.rig=buildCharacter(d.kind==='bot' ? Object.assign({char:'tracksuit'}, BOT_LOOK) : {char:CHARACTERS[d.char]?d.char:'tracksuit', jacket:ok(JACKET_COLORS,L.jacket)?L.jacket:'Black', pants:ok(PANTS_COLORS,L.pants)?L.pants:'Black'}); scene.add(this.rig.root); Thermal.tagBot(this.rig);
     this.label=makeLabel(); this.rig.root.add(this.label.s); this.setWeapon(d.w); this.drawLabel();
   }
   setWeapon(w){ if (this.weapon) this.rig.weaponSlot.remove(this.weapon.model); this.w=w; this.weapon=createWeapon(w, STOCK_CONFIG(w)); this.rig.weaponSlot.add(this.weapon.model); }
   drawLabel(){ const g=this.label.c.getContext('2d'); g.clearRect(0,0,128,36); g.fillStyle='rgba(0,0,0,.55)'; g.fillRect(4,2,120,32);
-    g.fillStyle=this.kind==='bot'?'#ffcf3f':'#7fd0ff'; g.font='bold 13px sans-serif'; g.textAlign='center'; g.fillText(this.name,64,15);
+    if (this.team!==undefined && GANGS[this.team]){ g.fillStyle=GANGS[this.team].col; g.fillRect(4,2,4,32); }      // Gang Wars: gang colour stripe
+    g.fillStyle=this.team!==undefined&&GANGS[this.team] ? GANGS[this.team].col : this.kind==='bot'?'#ffcf3f':'#7fd0ff'; g.font='bold 13px sans-serif'; g.textAlign='center'; g.fillText(this.name,64,15);
     g.fillStyle='#999'; g.font='9px sans-serif'; g.fillText(this.kind==='bot'?'BOT':'PLAYER',108,15);
     g.fillStyle='#333'; g.fillRect(14,21,100,7); g.fillStyle='#4fd06a'; g.fillRect(14,21,Math.max(0,Math.min(100,this.hp)),7);
     if (this.dev){ g.fillStyle='#c0262b'; g.fillRect(6,4,26,11); g.fillStyle='#fff'; g.font='bold 8px sans-serif'; g.fillText('DEV',19,12); } this.label.tex.needsUpdate=true; }
@@ -27,7 +31,7 @@ class RemoteEnt {
     this.yaw+=angleDiff(this.tyaw,this.yaw)*Math.min(1,dt*12);
     const rg=this.rig; rg.root.visible=this.alive; if (!this.alive) return;
     if (this.ride){ const v=this.ride; this.pos.set(v.pos.x, v.pos.y+v.S.deck, v.pos.z); this.yaw=v.yaw; }   // riding: stand / sit on the vehicle
-    rg.root.position.copy(this.pos); rg.root.rotation.y=this.yaw; this.label.s.visible=this.pos.distanceTo(camera.position)<40;
+    rg.root.position.copy(this.pos); rg.root.rotation.y=this.yaw; this.label.s.visible=this.pos.distanceTo(camera.position)<40 || (Net.gang && this.team===Net.myTeam);   // teammates: tag at any range
     const inv=this.vel.clone().applyAxisAngle(new V3(0,1,0),-this.yaw);
     // far players animate less often on weak settings (same idea as the bots)
     if (Perf.potato || Settings.perf){ this.animAcc=(this.animAcc||0)+dt; if (this.pos.distanceTo(camera.position)>(Settings.superPerf?22:35) && this.animAcc<1/Perf.botAnimHz()) return; dt=this.animAcc; this.animAcc=0; }
@@ -47,7 +51,7 @@ const Net = {
     let ws; try { ws=new WebSocket(url); } catch(e){ this.err='Could not open a connection: '+e.message; Lobby.render(); return; }
     this.ws=ws; Lobby.render('Connecting to '+url+' …');
     const to=setTimeout(()=>{ if (!this.connected){ this.err='No answer from '+url+' (is the server running, and is the address right?)'; try{ ws.close(); }catch(e){} Lobby.render(); } }, 6000);
-    ws.onopen=()=>{ clearTimeout(to); this.connected=true; this.send({t:'hello', token:this.token(), name:Settings.name||'PLAYER', char:CharLook.char, weapon:Loadout.firearm, tag:Dev.showTag()?'DEV':''}); };
+    ws.onopen=()=>{ clearTimeout(to); this.connected=true; this.send({t:'hello', token:this.token(), name:Settings.name||'PLAYER', char:CharLook.char, look:{jacket:CharLook.jacket, pants:CharLook.pants}, weapon:Loadout.firearm, tag:Dev.showTag()?'DEV':'', restore:this.backup()}); this._lastLo=null; };
     ws.onclose=()=>{ clearTimeout(to); const was=this.connected; this.connected=false; this.room=null; if (this.inMatch) this.leaveMatch('Connection to the server was lost'); ProfileAuthority.useRemote(null); if (was) this.err='Disconnected from the server.'; Lobby.render(); UI.menuInfo(); };
     ws.onerror=()=>{ this.err='Connection failed. Check the address; an https page needs a wss:// server, and some hosts block outside connections.'; Lobby.render(); };
     ws.onmessage=ev=>{ let m; try { m=JSON.parse(ev.data); } catch(e){ return; } this.onMessage(m); };
@@ -58,18 +62,27 @@ const Net = {
   devAuth(pw){ return new Promise(res=>{ this._devCb=res; this.send({t:'devauth', pw}); setTimeout(()=>{ if (this._devCb===res){ this._devCb=null; res({ok:false, why:'no answer from the server'}); } },5000); }); },
   online(){ return this.inMatch; },
   // everything the local game can shoot at besides the host's own bots
+  // signed copy of your online profile (cash, level, purchases), kept so a restarted server can restore it
+  keepSeal(p){ if (p && p.seal && this.url) Store.set('seal:'+this.url, p.seal); },
+  backup(){ return this.url ? Store.get('seal:'+this.url, null) : null; },
+  // character, outfit colours and gun -> server; re-sent whenever they change (e.g. after visiting the Character screen)
+  syncLoadout(force){ if (!this.connected) return; const m={t:'loadout', char:CharLook.char, look:{jacket:CharLook.jacket, pants:CharLook.pants}, weapon:Loadout.firearm}, k=JSON.stringify(m);
+    if (force || k!==this._lastLo){ this._lastLo=k; this.send(m); } },
+  // Gang Wars: which gang an entity is in (P, host-run bots, remote players/bots); null outside Gang Wars
+  teamOf(t){ if (!this.gang) return null; if (t===P) return this.myTeam; if (t && t.team!==undefined) return t.team; if (t && t.netId && this.teamById[t.netId]!==undefined) return this.teamById[t.netId]; return null; },
   targets(){ const out=[]; for (const e of this.ents.values()) if (e.alive) out.push(e); return out; },
   netIdOf(t){ return t===P ? this.id : t.netId || t.id; },
   entityById(id){ if (id===this.id) return P; const b=Bots.list.find(x=>x.netId===id); return b || this.ents.get(id) || null; },
   onMessage(m){
     switch(m.t){
       case 'devauth': { const cb=this._devCb; this._devCb=null; if (m.ok) this.dev=true; if (cb) cb({ok:!!m.ok, remote:true, why:m.ok?'':m.why}); break; }
-      case 'welcome': this.id=m.id; this.dev=m.dev; ProfileAuthority.useRemote(m.profile); Lobby.render(); UI.menuInfo(); break;
-      case 'profile': ProfileAuthority.useRemote(m.profile); if (m.xp) Bus.emit('xp',{n:m.xp, why:m.why}); if (m.cash) Bus.emit('cash',{n:m.cash, why:m.why}); if (m.bought){ Bus.emit('toast',{t:'PURCHASED · '+m.bought.replace('att:','').toUpperCase(),kind:'ok'}); Snd.uiSfx('buy'); const ab=UI._afterBuy; if (ab && ab.item===m.bought){ UI._afterBuy=null; if (ab.then) ab.then(); } if (Game.state==='loadout') UI.renderLoadout(); } UI.menuInfo(); break;
+      case 'welcome': this.id=m.id; this.dev=m.dev; this.keepSeal(m.profile); ProfileAuthority.useRemote(m.profile); if (m.restored) Bus.emit('toast',{t:'ONLINE PROFILE RESTORED',kind:'ok'}); Lobby.render(); UI.menuInfo(); break;
+      case 'profile': this.keepSeal(m.profile); ProfileAuthority.useRemote(m.profile); if (m.xp) Bus.emit('xp',{n:m.xp, why:m.why}); if (m.cash) Bus.emit('cash',{n:m.cash, why:m.why}); if (m.bought){ Bus.emit('toast',{t:'PURCHASED · '+m.bought.replace('att:','').toUpperCase(),kind:'ok'}); Snd.uiSfx('buy'); const ab=UI._afterBuy; if (ab && ab.item===m.bought){ UI._afterBuy=null; clearTimeout(UI._buyTO); if (ab.then) ab.then(); } if (Game.state==='loadout') UI.renderLoadout(); } UI.menuInfo(); break;
       case 'room': this.room=m; this.isHost=m.host===this.id; Lobby.render(); break;
       case 'error': this.err=m.why; Lobby.render(); break;
       case 'ride': Rides.netRide(m); break;
-      case 'reject': if (m.what==='ride') Rides.pendingId=null; if (m.what!=='hits') Bus.emit('toast',{t:'SERVER: '+m.what.toUpperCase()+' REJECTED · '+m.why.toUpperCase(),kind:'warn'}); else this.rejected=(this.rejected||0)+1; break;
+      case 'reject': if (m.what==='ride') Rides.pendingId=null;
+        if (m.what==='buy' && UI._afterBuy){ const ab=UI._afterBuy; UI._afterBuy=null; clearTimeout(UI._buyTO); UI.buyFailed(ab.name||'item', m.why); break; } if (m.what!=='hits') Bus.emit('toast',{t:'SERVER: '+m.what.toUpperCase()+' REJECTED · '+m.why.toUpperCase(),kind:'warn'}); else this.rejected=(this.rejected||0)+1; break;
       case 'start': this.startMatch(m); break;
       case 'snap': this.snap(m); break;
       case 'hit': this.onHit(m); break;
@@ -97,29 +110,32 @@ const Net = {
   // ---- match lifecycle
   startMatch(m){
     this.inMatch=true; this.matchId=m.matchId; this.settings=m.settings; this.za=null; this.clock=0; this.rejected=0;
+    this.gang = m.settings.mode==='gang'; this.teamKills=[0,0]; this.teamById={}; this.myTeam=null;
+    for (const d of m.ents){ if (d.team!==undefined) this.teamById[d.id]=d.team; if (d.id===this.id && d.team!==undefined) this.myTeam=d.team; }
     for (const e of this.ents.values()) e.remove(); this.ents.clear();
     const st=m.settings, mine=new Set(); let bi=0;
     // the host runs the bots (AI needs the 3D scene); the server owns their health
     if (st.mode==='backpack'){ this.zaBackup=Object.assign({},ZARules); Object.assign(ZARules, {variant:st.variant, time:st.time, classicHold:st.classicHold, spawns:st.spawns, respawn:st.respawn, resetAfter:st.resetAfter, difficulty:st.difficulty, bots:this.isHost?st.bots:0}); }
-    else { this.mrBackup=Object.assign({},MatchRules); Object.assign(MatchRules, {time:st.time, kills:st.kills, tie:st.tie, difficulty:st.difficulty, bots:this.isHost?st.bots:0}); }
+    else { this.mrBackup=Object.assign({},MatchRules); Object.assign(MatchRules, {time:st.time, kills:this.gang?0:st.kills, tie:st.tie, difficulty:st.difficulty, bots:this.isHost?st.bots:0}); }
     Game.startMatch(st.mode, true);
+    if (this.gang) Bus.emit('toast',{t:'GANG WARS · YOU ARE IN THE '+GANGS[this.myTeam].name,kind:'obj'});
     for (const d of m.ents){
       if (d.id===this.id){ P.pos.set(...d.pos); P.yaw=d.yaw;
         // the server applied the room rules: start weapon and an allowed character
         if (d.w && d.w!==Arsenal.firearm && FIREARMS.includes(d.w)){ Arsenal.firearm=d.w; Arsenal.ammo={}; Arsenal.cur=null; Arsenal.equip(d.w,true); }
-        if (d.char && d.char!==CharLook.char){ this.lookBackup=Object.assign({},CharLook); Object.assign(CharLook,{char:d.char},CHARACTERS[d.char].defaults); Game.applyCharacter(); Bus.emit('toast',{t:'CHARACTER NOT ALLOWED IN THIS ROOM · PLAYING AS '+CHARACTERS[d.char].name,kind:'warn'}); }
+        if (d.char && d.char!==CharLook.char){ this.lookBackup=Object.assign({},CharLook); Object.assign(CharLook,{char:d.char},CHARACTERS[d.char].defaults); Game.applyCharacter(); Bus.emit('toast',{t:'THE HOST DID NOT ALLOW THAT CHARACTER · PLAYING AS '+CHARACTERS[d.char].name,kind:'warn'}); }
         continue; }
-      if (d.kind==='bot' && this.isHost){ const b=Bots.list[bi++]; if (b){ b.netId=d.id; b.name=d.name; b.pos.set(...d.pos); b.drawLabel(); mine.add(d.id); } continue; }
+      if (d.kind==='bot' && this.isHost){ const b=Bots.list[bi++]; if (b){ b.netId=d.id; b.name=d.name; b.team=d.team; b.pos.set(...d.pos); b.drawLabel(); mine.add(d.id); } continue; }
       this.ents.set(d.id, new RemoteEnt(d));
     }
     Game.state='playing'; UI.show(null);
   },
-  leaveMatch(why){ this.inMatch=false; for (const e of this.ents.values()) e.remove(); this.ents.clear();
+  leaveMatch(why){ this.inMatch=false; this.gang=false; this.myTeam=null; for (const b of Bots.list){ b.team=undefined; b.drawLabel&&b.drawLabel(); } for (const e of this.ents.values()) e.remove(); this.ents.clear();
     if (this.lookBackup){ Object.assign(CharLook,this.lookBackup); this.lookBackup=null; Game.applyCharacter(); }
     if (this.zaBackup){ Object.assign(ZARules,this.zaBackup); this.zaBackup=null; } if (this.mrBackup){ Object.assign(MatchRules,this.mrBackup); this.mrBackup=null; }
     if (why) Bus.emit('toast',{t:why.toUpperCase(),kind:'warn'}); },
   snap(m){
-    this.clock=m.clock; Mode.clock=m.clock;
+    this.clock=m.clock; Mode.clock=m.clock; if (m.tk) this.teamKills=m.tk;
     for (const a of m.ents){
       if (a[0]===this.id){ P.kills=a[9]; P.deaths=a[10]; if (Math.abs(P.hp-a[8])>1 && P.alive) P.hp=a[8]; continue; }
       const b=Bots.list.find(x=>x.netId===a[0]); if (b){ b.kills=a[9]; b.deaths=a[10]; continue; }
@@ -136,6 +152,7 @@ const Net = {
     else if (t){ t.hp=m.hp; t.drawLabel(); }
   },
   onKill(m){
+    if (m.tk) this.teamKills=m.tk;
     const t=this.entityById(m.target), k=this.entityById(m.by), wn=WEAPON_DEFS[m.w]?WEAPON_DEFS[m.w].name:'—';
     const nm=e=>e===P?'YOU':e?e.name:'—';
     if (k===P) Bus.emit('kill',{victim:nm(t), weapon:wn, head:m.head}); else Bus.emit('killfeed',{killer:nm(k), victim:nm(t), weapon:wn});
@@ -150,7 +167,7 @@ const Net = {
     const e=this.ents.get(m.id); if (e){ e.pos.set(...m.pos); e.tpos.set(...m.pos); e.alive=true; e.hp=m.hp; e.drawLabel(); }
   },
   onEnd(m){
-    const nm=id=> id==='TIE' ? 'TIE' : id===this.id ? 'YOU' : ((this.entityById(id)||{}).name||'?');
+    const nm=id=> id==='TIE' ? 'TIE' : id===this.id || id==='team'+this.myTeam ? 'YOU' : /^team[01]$/.test(id) ? GANGS[+id[4]].name : ((this.entityById(id)||{}).name||'?');
     this.endRows=m.rows; Game.rewards=m.rewards; ProfileAuthority.useRemote(m.profile);
     Mode.end(nm(m.winner));
   },
@@ -191,8 +208,8 @@ const Lobby = {
         <div class="row"><input type="text" id="on-code" placeholder="ROOM CODE" maxlength="5" style="text-transform:uppercase"><button id="on-join">JOIN</button></div>
         ${Net.err?`<p class="err">${esc(Net.err)}</p>`:''}<div class="row"><button id="on-disc">DISCONNECT</button></div>`;
       box.innerHTML=h;
-      document.getElementById('on-create').onclick=()=>{ Net.err=''; Net.send({t:'loadout', char:CharLook.char, weapon:Loadout.firearm}); Net.send({t:'create', settings:this.defaults()}); };
-      document.getElementById('on-join').onclick=()=>{ Net.err=''; Net.send({t:'loadout', char:CharLook.char, weapon:Loadout.firearm}); Net.send({t:'join', code:document.getElementById('on-code').value}); };
+      document.getElementById('on-create').onclick=()=>{ Net.err=''; Net.syncLoadout(true); Net.send({t:'create', settings:this.defaults()}); };
+      document.getElementById('on-join').onclick=()=>{ Net.err=''; Net.syncLoadout(true); Net.send({t:'join', code:document.getElementById('on-code').value}); };
       document.getElementById('on-disc').onclick=()=>{ Net.close(); Net.err=''; this.render(); };
       return;
     }
@@ -213,10 +230,10 @@ const Lobby = {
   tab:'general',
   settingsUI(S, locked, send){
     const wrap=el('div','msu'), tabs=el('div','seg tabs msu-tabs'), body=el('div','msu-body');
-    const T=[['general','ROOM'],['match','MATCH'],['loadout','WEAPONS & GEAR'],['mode',S.mode==='dm'?'DEATHMATCH':'ZA / BAG'],['rewards','REWARDS'],['summary','SUMMARY']];
+    const T=[['general','ROOM'],['match','MATCH'],['loadout','WEAPONS & GEAR'],['mode',S.mode==='dm'?'DEATHMATCH':S.mode==='gang'?'GANG WARS':'ZA / BAG'],['rewards','REWARDS'],['summary','SUMMARY']];
     for (const [k,l] of T){ const b=el('button',this.tab===k?'on':'',l); b.onclick=()=>{ this.tab=k; this.render(); }; tabs.appendChild(b); }
     wrap.appendChild(tabs); wrap.appendChild(body);
-    const put=(k,v)=>{ if (locked) return; const n=Object.assign({},S,{[k]:v}); if (k==='mode'){ n.time=v==='dm'?600:300; delete n.weapons; } send(n); };
+    const put=(k,v)=>{ if (locked) return; const n=Object.assign({},S,{[k]:v}); if (k==='mode'){ n.time=v==='backpack'?300:600; n.kills=v==='gang'?40:20; delete n.weapons; } send(n); };
     const row=(label, ctrl, hint)=>{ const r=el('div','srow'); r.appendChild(el('label','',label+(hint?`<small>${hint}</small>`:''))); r.appendChild(ctrl); body.appendChild(r); };
     const toggle=(k)=>{ const t=el('button','tgl'+(S[k]?' on':''),S[k]?'ON':'OFF'); t.disabled=locked; t.onclick=()=>put(k,!S[k]); return t; };
     const drop=(k,opts)=>{ const d=el('select'); d.disabled=locked; for (const [v,t] of opts){ const o=el('option','',t); o.value=JSON.stringify(v); if (JSON.stringify(S[k])===o.value) o.selected=true; d.appendChild(o); } d.onchange=()=>put(k,JSON.parse(d.value)); return d; };
@@ -231,22 +248,24 @@ const Lobby = {
         row('Room name', (()=>{ const i=el('input'); i.type='text'; i.maxLength=24; i.value=S.name; i.disabled=locked; i.onchange=()=>put('name',i.value); return i; })());
         row('Private room code', el('span','code-sm',esc(Net.room.code)), 'players join with this code');
         row('Max players', slider('maxPlayers',2,8,1,v=>v+' players'));
-        row('Mode', drop('mode',[['dm','Deathmatch'],['backpack','The Fight for Za']]));
+        row('Mode', drop('mode',[['dm','Deathmatch'],['gang','Gang Wars (teams)'],['backpack','The Fight for Za']]));
         row('Bots', toggle('botsOn'));
         if (S.botsOn){ row('Bot count', slider('bots',1,12,1,v=>v+' bots')); row('Bot difficulty', drop('difficulty',[['easy','Easy'],['normal','Normal'],['hard','Hard']])); }
-        row('Teams', el('span','muted','Free-for-all only — this build has no team modes, so team and friendly-fire options are not offered'));
+        row('Teams', el('span','muted', S.mode==='gang' ? 'Red Gang vs Blue Gang · players split evenly, bots fill the smaller gang · no friendly fire' : 'Free-for-all (pick Gang Wars for teams)'));
         break;
       case 'match':
-        row('Time limit', slider('time',0,S.mode==='dm'?1800:1200,60,mins), '0 = unlimited');
+        row('Time limit', slider('time',0,S.mode!=='backpack'?1800:1200,60,mins), '0 = unlimited');
         if (S.mode==='dm') row('Kill limit', slider('kills',0,100,5,v=>v===0?'Unlimited':v+' kills'), '0 = unlimited');
+        if (S.mode==='gang') row('Gang kill limit', slider('kills',0,200,5,v=>v===0?'Unlimited':v+' kills'), 'first gang to this many kills wins · 0 = unlimited');
         row('Respawns', toggle('respawnOn'), S.respawnOn?'':'last one standing wins');
         if (S.respawnOn) row('Respawn delay', slider('respawnDelay',1,15,1,v=>v+' s'));
         row('Starting health', slider('hp',50,200,10,v=>v+' HP'));
         row('Starting stamina', slider('stamina',50,200,10,v=>v+'%'));
         if (S.mode==='dm') row('Tie on time-out', drop('tie',[['tie','Draw'],['deaths','Fewest deaths wins']]));
+        if (S.mode==='gang') row('On time-out', el('span','muted','the gang with more kills wins (equal = draw)'));
         break;
       case 'loadout':
-        row('Weapons allowed', checks('weapons', MODE_RULES[S.mode].firearms.map(w=>[w,WEAPON_DEFS[w].name])), 'the knife is always allowed');
+        row('Weapons allowed', checks('weapons', MODE_RULES[S.mode==='gang'?'dm':S.mode].firearms.map(w=>[w,WEAPON_DEFS[w].name])), 'the knife is always allowed');
         row('Starting weapon', drop('startWeapon',[['loadout','Each player\'s loadout'],['glock','Glock only'],['random','Random allowed weapon']]));
         row('Characters allowed', checks('chars', CHAR_ORDER.map(c=>[c,CHARACTERS[c].name])), 'others play as Masked Tracksuit');
         row('Consumables', toggle('items'), 'trunk loot, blunt, beer, Zyn');
@@ -256,7 +275,8 @@ const Lobby = {
         row('Landmines at spawn', slider('mines',0,3,1,v=>String(v)));
         break;
       case 'mode':
-        if (S.mode==='dm'){ row('Kill limit', slider('kills',0,100,5,v=>v===0?'Unlimited':v+' kills')); row('Time limit', slider('time',0,1800,60,mins)); row('Respawns', toggle('respawnOn')); row('Starting weapon', drop('startWeapon',[['loadout','Each player\'s loadout'],['glock','Glock only'],['random','Random allowed weapon']])); }
+        if (S.mode==='gang'){ row('Gang kill limit', slider('kills',0,200,5,v=>v===0?'Unlimited':v+' kills')); row('Time limit', slider('time',0,1800,60,mins)); row('Respawns', toggle('respawnOn'), S.respawnOn?'':'last gang standing wins'); row('Teams', el('span','muted','Red Gang vs Blue Gang, auto-balanced; no friendly fire; teammates\' tags are always shown')); }
+        else if (S.mode==='dm'){ row('Kill limit', slider('kills',0,100,5,v=>v===0?'Unlimited':v+' kills')); row('Time limit', slider('time',0,1800,60,mins)); row('Respawns', toggle('respawnOn')); row('Starting weapon', drop('startWeapon',[['loadout','Each player\'s loadout'],['glock','Glock only'],['random','Random allowed weapon']])); }
         else {
           row('Win rule', drop('variant',[['hold','Most hold time (scored by hold time)'],['classic','Backpack hold: first to hold it long enough']]));
           if (S.variant==='hold') row('Match length', slider('time',60,1200,60,mins)); else row('Hold time to win', slider('classicHold',10,120,5,v=>v+' s'));
@@ -282,7 +302,7 @@ const Lobby = {
   },
   summary(S){
     const t=S.time===0?'no time limit':Math.round(S.time/60)+' min';
-    const head = S.mode==='dm' ? `Deathmatch · ${S.kills?S.kills+' kills':'no kill limit'} · ${t}` : `The Fight for Za · ${S.variant==='hold'?'most hold time · '+t:'hold '+S.classicHold+' s to win'}`;
+    const head = S.mode==='gang' ? `Gang Wars · Red vs Blue · ${S.kills?'first gang to '+S.kills+' kills':'no kill limit'} · ${t}` : S.mode==='dm' ? `Deathmatch · ${S.kills?S.kills+' kills':'no kill limit'} · ${t}` : `The Fight for Za · ${S.variant==='hold'?'most hold time · '+t:'hold '+S.classicHold+' s to win'}`;
     return `<b>${esc(S.name)}</b> — ${head} · ${S.botsOn?S.bots+' '+S.difficulty+' bots':'no bots'} · up to ${S.maxPlayers} players<br>
       ${S.respawnOn?'respawn after '+S.respawnDelay+' s':'no respawns'} · ${S.hp} HP · ${S.stamina}% stamina · weapons: ${S.weapons.map(w=>WEAPON_DEFS[w].name).join(', ')} + knife${S.unlocks==='all'?' (all unlocked)':''} · start: ${S.startWeapon}<br>
       characters: ${S.chars.map(c=>CHARACTERS[c].name).join(', ')} · consumables ${S.items?'on':'off'} · Nic ${S.nic?'on':'off'} · abilities ${S.abilities?'on':'off'} · ${S.flash} flash / ${S.mines} mines · XP ×${S.xpMul} · cash ×${S.cashMul}`;

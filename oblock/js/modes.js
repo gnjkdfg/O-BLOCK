@@ -58,6 +58,7 @@ const BackpackAuthority = {
 
 // Mode rules (also enforced by the authority: requests that break them are rejected)
 const MODE_RULES = {
+  gang:     {title:'GANG WARS', firearms:['glock','drako','sniper','shotgun','ar15'], switch:true},
   dm:       {title:'DEATHMATCH', firearms:['glock','drako','sniper','shotgun','ar15'], switch:true},
   backpack: {title:'THE FIGHT FOR ZA', firearms:['glock'], switch:false},
 };
@@ -66,7 +67,7 @@ const Mode = {
   title(){ return MODE_RULES[this.cur].title; },
   allowedFirearm(id){ const f=MODE_RULES[this.cur].firearms; return f.includes(id) ? id : f[0]; },
   allowSwitch(){ return MODE_RULES[this.cur].switch; },
-  label(){ return this.cur==='dm' ? 'DEATHMATCH · '+rulesText() : 'THE FIGHT FOR ZA · '+zaRulesText(); },
+  label(){ return this.cur==='gang' ? 'GANG WARS' : this.cur==='dm' ? 'DEATHMATCH · '+rulesText() : 'THE FIGHT FOR ZA · '+zaRulesText(); },
   rules(){ return this.cur==='backpack' ? ZARules : MatchRules; },
   init(){
     this.mesh=makeBagModel(); this.mesh.scale.setScalar(1.6); this.mesh.visible=false; scene.add(this.mesh);

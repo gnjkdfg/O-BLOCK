@@ -308,7 +308,8 @@ const UI = {
   // =================================================================
   lo:{sel:'drako', tab:'att', slot:null, pick:null},
   initLoadout(){
-    $('#lo-back').onclick=()=>{ if (this.loDirty()){ this.revertCustom(); this.toast('UNSAVED CHANGES DISCARDED',''); } Game.go(this.loadoutReturn||'main'); };
+    // Back keeps your changes (it used to throw away attachments you had just installed or bought)
+    $('#lo-back').onclick=()=>{ if (this.loDirty()){ saveLoadout(); saveWCustom(); Game.refreshWeapons(); this.menuInfo(); this.toast('LOADOUT SAVED','ok'); } Game.go(this.loadoutReturn||'main'); };
     $('#lo-save').onclick=()=>{ saveLoadout(); saveWCustom(); Game.refreshWeapons(); this.loStatus('Loadout saved'); this.menuInfo(); this.renderLoadout(); };
     $('#lo-reset').onclick=()=>{ const id=this.lo.sel; Object.assign(WCustom[id].att, JSON.parse(JSON.stringify(WCustomSaved[id].att))); this.rebuildPreview(); this.loStatus('Attachments reset to the saved setup'); };
     $('#lo-clear').onclick=()=>{ const id=this.lo.sel; for (const s of WEAPON_SLOTS[id]) WCustom[id].att[s]=SLOT_DEFAULT[s]||null; this.rebuildPreview(); this.loStatus('All attachments removed (not saved yet)'); };
@@ -412,13 +413,17 @@ const UI = {
       const ba=$('#lo-buyatt'); if (ba) ba.onclick=()=>this.buyItem('att:'+sel, A.name, ()=>{ const prev=WCustom[id].att[L.slot]; WCustom[id].att[L.slot]=sel; this.rebuildPreview(L.slot, prev); this.loStatus(A.name+' bought and installed (not saved yet)'); }); }
   },
   // purchases from the loadout (offline: local profile; online: the server checks the price and your cash)
+  // purchases install AND save straight away, and every outcome is shown on the Loadout screen
   buyItem(item, name, then){
+    const done=()=>{ if (then) then(); saveLoadout(); saveWCustom(); Game.refreshWeapons(); this.menuInfo(); if (Game.state==='loadout'){ this.renderLoadout(); this.loStatus(name+' bought · saved'); } };
     const r=ProfileAuthority.buy(item);
-    if (r.ok){ this.toast(name.toUpperCase()+' BOUGHT','ok'); Snd.uiSfx('buy'); if (then) then(); }
-    else if (r.pending){ this._afterBuy={item, then}; }
-    else { this.toast('CAN\'T BUY: '+r.why.toUpperCase(),'warn'); Snd.uiSfx('deny'); }
-    this.renderLoadout();
+    if (r.ok){ this.toast(name.toUpperCase()+' BOUGHT','ok'); Snd.uiSfx('buy'); done(); }
+    else if (r.pending){ this._afterBuy={item, then:done, name}; this.loStatus('Buying '+name+'…');
+      clearTimeout(this._buyTO); this._buyTO=setTimeout(()=>{ if (this._afterBuy && this._afterBuy.item===item){ this._afterBuy=null; this.buyFailed(name,'no answer from the server · try again'); } }, 6000); }
+    else this.buyFailed(name, r.why);
+    if (Game.state==='loadout') this.renderLoadout();
   },
+  buyFailed(name, why){ this.toast('CAN\'T BUY '+name.toUpperCase()+': '+String(why).toUpperCase(),'warn'); Snd.uiSfx('deny'); if (Game.state==='loadout') this.loStatus('Can\'t buy '+name+': '+why); },
   // gameplay stats used for display (all from weaponStats, the same function gameplay uses)
   statRows(d){
     if (d.kind==='melee') return [['Damage',d.dmg,100,true,v=>v+''],['Heavy stab',d.heavyDmg,200,true,v=>v+''],['Swing time',d.rate,1.2,false,v=>v.toFixed(2)+' s'],['Movement',4.6*d.moveMul,5.6,true,v=>v.toFixed(2)+' m/s']];
@@ -524,8 +529,8 @@ const UI = {
       seg('Bots target you','botsFire',[[true,'On'],[false,'Off']]);
     } else {
       slider('Mouse sensitivity','sens',0.2,3,0.05,v=>v.toFixed(2)+'×');
-      seg('Aim assist','aimAssist',[['off','Off'],['normal','Normal'],['strong','Strong']]);
-      box.appendChild(el('p','hint','Aim assist only helps once your crosshair is already on someone: it slows your aim over them and pulls toward them while you aim or shoot. It never jumps to the next player by itself.'));
+      seg('Aim assist','aimAssist',[['off','Off'],['on','On']]);
+      box.appendChild(el('p','hint','Slight: when your crosshair is already on someone it slows your mouse a little so it is easier to stay on them. It never moves your aim or locks on. Not used with the sniper.'));
       seg('Lean (Q / E)','leanMode',[['hold','Hold'],['toggle','Toggle']]);
       seg('Crouch','crouchMode',[['hold','Hold'],['toggle','Toggle']],()=>{ P.crouchToggle=false; });
       if (RECOMMENDED_CONTROLS){ const r=el('div','srow'); r.appendChild(el('label','','Recommended controls')); const s=el('div','seg'); const b=el('button','','APPLY');
@@ -578,7 +583,9 @@ const UI = {
   // HUD
   // =================================================================
   toast(t, kind='', quiet){
-    if (!t) return; const box=$('#toasts'); if (!box) return;
+    if (!t) return; let box=$('#toasts'); if (!box) return;
+    // menus: the in-match message box is hidden, so use a separate one that is always visible
+    if (!box.offsetParent){ box=$('#mtoasts'); if (!box){ box=document.createElement('div'); box.id='mtoasts'; document.body.appendChild(box); } }
     if (box.firstChild && box.firstChild.textContent===t){ return; }
     const e=el('div','toast '+(kind||''), t); box.prepend(e); while (box.children.length>3) box.lastChild.remove();
     setTimeout(()=>e.classList.add('out'),2100); setTimeout(()=>e.remove(),2500);
@@ -660,7 +667,7 @@ const UI = {
     $('#slots').innerHTML = `<i class="${A.cur!=='knife'?'on':''}">${Input.label(Binds.firearm)} ${WEAPON_DEFS[A.firearm].name}</i><i class="${A.cur==='knife'?'on':''}">${Input.label(Binds.knife)} KNIFE</i>`;
     { const nic=(StreakAuthority.e.player||{charges:{nic:0}}).charges.nic||0, it=(k,n,act)=>`<i class="${n?'':'dim'}" title="${k}">${ITEM_ICON[k]}${n}<small>${Input.label(Binds[act])}</small></i>`;
       $('#equip').innerHTML = `<i>FLASH ${P.flash}<small>${Input.label(Binds.grenade)}</small></i><i>MINE ${P.mine}<small>${Input.label(Binds.mine)}</small></i>`+it('blunt',P.items.blunt,'smoke')+it('beer',P.items.beer,'beer')+it('zyn',P.items.zyn,'zyn')+it('nic',nic,'nic'); }
-    $('#mtimer').textContent = (Mode.cur==='dm' && MatchRules.time>0) ? fmtTime(Math.max(0,MatchRules.time-Mode.clock)) : (Mode.cur==='backpack' && ZARules.variant==='hold') ? fmtTime(Math.max(0,ZARules.time-Mode.clock)) : fmtTime(Mode.clock);   // counts down with a time limit $('#mtitle').textContent=Mode.title()+' · '+Env.clockString()+(Env.raining?' · RAIN':'');
+    $('#mtimer').textContent = (Mode.cur!=='backpack' && MatchRules.time>0) ? fmtTime(Math.max(0,MatchRules.time-Mode.clock)) : (Mode.cur==='backpack' && ZARules.variant==='hold') ? fmtTime(Math.max(0,ZARules.time-Mode.clock)) : fmtTime(Mode.clock);   // counts down with a time limit $('#mtitle').textContent=(Net.gang ? 'GANG WARS · RED '+Net.teamKills[0]+' – '+Net.teamKills[1]+' BLUE'+(Net.settings&&Net.settings.kills?' · FIRST TO '+Net.settings.kills:'')+' · YOU: '+GANGS[Net.myTeam].name.split(' ')[0] : Mode.title()+' · '+Env.clockString())+(Env.raining?' · RAIN':'');
     if (Mode.cur==='backpack'){
       const s=BackpackAuthority.s, who=Mode.nameOf(s.carrier), where=zoneName(s.x,s.z,s.y);
       if (ZARules.variant==='classic'){
@@ -672,6 +679,8 @@ const UI = {
           `<span style="color:var(--mut)"> · LEADER ${lead?Mode.nameOf(lead[0])+' '+lead[1].toFixed(1)+'s':'—'}</span>`+
           `<div id="zastand">${rows.map(r=>`<div class="${r[0]==='player'?'me':''} ${r[0]===s.carrier?'car':''}"><span>${Mode.nameOf(r[0])}${r[0]===s.carrier?' ◆':''}</span><span>${r[1].toFixed(1)}s</span></div>`).join('')}</div>`;
       }
+    } else if (Net.inMatch && Net.gang){ const tk=Net.teamKills, K=(Net.settings&&Net.settings.kills)||0, me=Net.myTeam, G=GANGS;
+      $('#objective').innerHTML=`<b style="color:${G[0].col}">RED ${tk[0]}</b> <span style="color:var(--mut)">–</span> <b style="color:${G[1].col}">${tk[1]} BLUE</b>${K>0?' <span style="color:var(--mut)">· FIRST TO '+K+'</span>':''} <span style="color:var(--mut)">· YOU: </span><b style="color:${G[me].col}">${G[me].name}</b>`;
     } else { const top=Match.rows()[0], K=MatchRules.kills; $('#objective').innerHTML=`<b>${P.kills}</b>${K>0?' / '+K:''} KILLS <span style="color:var(--mut)">· LEADER ${top.me?'YOU':top.name} ${top.kills}</span>${K>0?`<span class="kprog"><i style="width:${Math.min(100,P.kills/K*100)}%"></i></span>`:''}`; }
     $('#area').textContent = areaName();
     let t='';

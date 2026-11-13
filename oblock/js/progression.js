@@ -59,7 +59,7 @@ const ProfileAuthority = {
   ownsChar(id){ return !CHARACTERS[id] || !CHARACTERS[id].price || this.owns(id); },
   // ---- purchases (validated: known item, not owned, enough cash)
   buy(item){
-    if (this.s.remote){ Net.send({t:'buy', item}); return {ok:false, why:'sent to the server', pending:true}; }
+    if (this.s.remote){ if (!Net.connected) return {ok:false, why:'not connected to the server'}; Net.send({t:'buy', item}); return {ok:false, why:'sent to the server', pending:true}; }
     const price = PROG.price[item]; if (price===undefined) return {ok:false, why:'unknown item'};
     if (this.s.owned[item]) return {ok:false, why:'already owned'};
     if (!this.s.unlimited && this.s.cash < price) return {ok:false, why:'need '+fmtCash(price-this.s.cash)+' more'};

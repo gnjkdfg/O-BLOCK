@@ -170,7 +170,8 @@ class Bot {
     this.label.s.visible=true; this.drawLabel();
   }
   drawLabel(){ const g=this.label.c.getContext('2d'); g.clearRect(0,0,128,36); g.fillStyle='rgba(0,0,0,.55)'; g.fillRect(4,2,120,32);
-    g.fillStyle='#ffcf3f'; g.font='bold 13px sans-serif'; g.textAlign='center'; g.fillText(this.name,64,15);
+    const gc = this.team!==undefined && typeof GANGS!=='undefined' && GANGS[this.team] ? GANGS[this.team].col : null; if (gc){ g.fillStyle=gc; g.fillRect(4,2,4,32); }
+    g.fillStyle=gc||'#ffcf3f'; g.font='bold 13px sans-serif'; g.textAlign='center'; g.fillText(this.name,64,15);
     g.fillStyle='#999'; g.font='9px sans-serif'; g.fillText('BOT',112,15);
     const k=this.hp/this.maxHp(); g.fillStyle='#333'; g.fillRect(14,21,100,7); g.fillStyle=StreakAuthority.hpMul('bot'+this.i)>1?'#ff5a4a':k>0.5?'#4fd06a':k>0.25?'#f0c03a':'#e04040'; g.fillRect(14,21,100*k,7); this.label.tex.needsUpdate=true; }
   maxHp(){ return 100*StreakAuthority.hpMul('bot'+this.i); }
@@ -221,7 +222,9 @@ class Bot {
     if (lineOfSight(eyeOf(this), eyeOf(t))){ this.aimPart='head'; return true; }
     return false;
   }
-  enemies(){ const out=[]; if (aliveT(P) && Settings.botsFire) out.push(P); for (const b of Bots.list) if (b!==this && b.alive) out.push(b); if (Net.inMatch) for (const e of Net.targets()) out.push(e); return out; }
+  enemies(){ const out=[]; if (aliveT(P) && Settings.botsFire) out.push(P); for (const b of Bots.list) if (b!==this && b.alive) out.push(b); if (Net.inMatch) for (const e of Net.targets()) out.push(e);
+    if (Net.gang){ const mine=Net.teamOf(this); return out.filter(t=>Net.teamOf(t)!==mine); }   // Gang Wars: never shoot your own gang
+    return out; }
   perceive(){
     // nearest few candidates by distance, then FOV + line of sight
     const list=this.enemies().map(t=>[t, Math.hypot(t.pos.x-this.pos.x,t.pos.z-this.pos.z)]).sort((a,b)=>a[1]-b[1]).slice(0,3);
@@ -469,7 +472,7 @@ class Bot {
     const rg=this.rig; rg.root.position.copy(this.pos); rg.root.rotation.y=this.yaw;
     const tp=t&&this.lastVis?chestOf(t):null, e=eyeOf(this);
     const pitch = tp ? Math.atan2(tp.y-e.y, Math.hypot(tp.x-e.x,tp.z-e.z)) : -0.15;
-    this.label.s.visible = camD<40;
+    this.label.s.visible = camD<40 || (Net.gang && this.team!==undefined && this.team===Net.myTeam);
     this.animAcc=(this.animAcc||0)+dt;
     if (!far || this.animAcc>1/Perf.botAnimHz()){
       const md=this.moveDir||0;

@@ -144,7 +144,7 @@ const Game = {
     this.state='end'; if (document.pointerLockElement) document.exitPointerLock();
     $('#end-title').textContent = name==='YOU' ? 'VICTORY' : name+' WINS';
     if (name==='TIE') $('#end-title').textContent='DRAW';
-    const rows=Net.inMatch && Net.endRows ? Net.endRows.map(r=>({name:r.id===Net.id?'YOU':r.name, kills:r.kills, deaths:r.deaths, score:Mode.cur==='dm'?r.kills*100-r.deaths*10:Math.round(r.hold*10), me:r.id===Net.id, bot:r.kind==='bot'})) : Match.rows(), dm=Mode.cur==='dm';
+    const rows=Net.inMatch && Net.endRows ? Net.endRows.map(r=>({name:r.id===Net.id?'YOU':r.name, kills:r.kills, deaths:r.deaths, score:Mode.cur!=='backpack'?r.kills*100-r.deaths*10:Math.round(r.hold*10), me:r.id===Net.id, bot:r.kind==='bot'})) : Match.rows(), dm=Mode.cur==='dm';
     const za=!dm, hold=za && ZARules.variant==='hold', stn=za?BackpackAuthority.standings():[];
     $('#end-sub').textContent = dm ? (name==='TIE' ? 'Time is up — tied on kills' : (MatchRules.kills>0 && rows[0].kills>=MatchRules.kills ? 'Reached the kill limit' : 'Most kills when time ran out'))
       : hold ? (name==='TIE' ? 'Time is up — tied on hold time' : 'Longest total hold time: '+(stn[0]?stn[0][1].toFixed(1)+' s':'—')) : 'Held the za for '+ZARules.classicHold+' seconds';
@@ -398,37 +398,53 @@ const AimLock = {
   },
 };
 
-/* Aim assist (Settings → Controls, on by default for everyone). It never picks a target for you: it only helps once
-   your crosshair is already close to someone (a few degrees), by slowing your aim while it is over them ("friction")
-   and, while you aim down sights or shoot, gently pulling toward them. It sticks to that one target; after that target
-   goes down or you move well off it there is a short pause, and the next person must be aimed at first.
-   The developer aim lock overrides it while that is on. */
+/* Aim assist (Settings → Controls: Off / On, on by default). Slight, and it never aims for you: it does NOT pull,
+   snap or lock on, not even while aiming in. It only slows your mouse a little while your crosshair is already right
+   on someone (within about 3°), so it is easier to stay on target. None for the sniper, none for teammates.
+   Developer aim lock (dev menu) and the knife are separate. */
 const AimAssist = {
-  cur:null, slow:1, cool:0,
-  CFG:{ normal:{cone:0.075, keep:0.13, pull:6, slow:0.62}, strong:{cone:0.1, keep:0.17, pull:10, slow:0.5} },
+  cur:null, slow:1,
+  CFG:{ on:{cone:0.05, keep:0.075, slow:0.78} },
   angleTo(t, eye, fwd){ let best=9, bp=null;
     for (const p of [chestOf(t), AimLock.point(t,true)]){ const d=p.clone().sub(eye), L=d.length(); if (L<0.5 || L>180) continue; const a=Math.acos(clamp(d.dot(fwd)/L,-1,1)); if (a<best){ best=a; bp=p; } }
     return {a:best, p:bp}; },
   update(dt){
     this.slow=1; const C=this.CFG[Settings.aimAssist];
-    if (!C || (Dev.enabled && Dev.aim!=='off') || Game.state!=='playing' || !P.alive || Arsenal.cur==='knife' || P.inCar){ this.cur=null; return; }
-    if (this.cur && !this.cur.alive){ this.cur=null; this.cool=0.45; }
-    if (this.cool>0){ this.cool-=dt; return; }
+    if (!C || (Dev.enabled && Dev.aim!=='off') || Game.state!=='playing' || !P.alive || Arsenal.cur==='knife' || Arsenal.cur==='sniper' || P.inCar){ this.cur=null; return; }
     const eye=camera.position, fwd=new V3(-Math.sin(P.yaw)*Math.cos(P.pitch), Math.sin(P.pitch), -Math.cos(P.yaw)*Math.cos(P.pitch));
-    let hit=null;
-    if (this.cur){ const r=this.angleTo(this.cur, eye, fwd); if (r.p && r.a<C.keep && lineOfSight(eye, r.p)) hit={t:this.cur, ...r}; else { this.cur=null; this.cool=0.25; return; } }
-    else {
+    if (this.cur){ const r=this.angleTo(this.cur, eye, fwd); if (!this.cur.alive || !r.p || r.a>C.keep || !lineOfSight(eye, r.p)) this.cur=null; }
+    if (!this.cur){
       const list=[]; for (const b of Bots.list) if (b.alive && b.rig) list.push(b); if (Net.inMatch) for (const e of Net.targets()) if (e.rig) list.push(e);
-      for (const t of list){ const r=this.angleTo(t, eye, fwd); if (r.p && r.a<C.cone && (!hit || r.a<hit.a) && lineOfSight(eye, r.p)) hit={t, ...r}; }
+      let hit=null; for (const t of list){ if (!isEnemy(t)) continue; const r=this.angleTo(t, eye, fwd); if (r.p && r.a<C.cone && (!hit || r.a<hit.a) && lineOfSight(eye, r.p)) hit={t, ...r}; }
       if (!hit) return; this.cur=hit.t;
     }
-    this.slow=C.slow;
-    if (Arsenal.ads || Arsenal.trigger){
-      const d=hit.p.clone().sub(eye), k=1-Math.exp(-dt*C.pull);
-      P.yaw+=angleDiff(Math.atan2(-d.x,-d.z),P.yaw)*k; P.pitch=clamp(P.pitch+(Math.atan2(d.y,Math.hypot(d.x,d.z))-P.pitch)*k,-1.5,1.5);
-    }
+    this.slow=C.slow;      // friction only: no pull, no snap
   },
 };
+
+/* Knife lock-on (the only lock-on in normal play): swinging the knife at someone close in front of you (4.5 m,
+   about 60° either side, in clear sight) turns you onto them during the swing and lunges you in, so the stab lands. */
+const KnifeLock = {
+  t:null, time:0,
+  start(){
+    this.t=null; if (Arsenal.cur!=='knife' || !P.alive) return;
+    const eye=new V3(P.pos.x,P.pos.y+P.height-0.15,P.pos.z), fwd=new V3(-Math.sin(P.yaw),0,-Math.cos(P.yaw));
+    const list=[]; for (const b of Bots.list) if (b.alive && b.rig) list.push(b); if (Net.inMatch) for (const e of Net.targets()) if (e.rig) list.push(e);
+    let best=null, bd=4.5;
+    for (const t of list){ if (!isEnemy(t)) continue; const c=chestOf(t), to=c.clone().sub(eye); to.y=0; const dist=to.length(); if (dist>bd || dist<0.05) continue; to.divideScalar(dist);
+      if (to.dot(fwd)>0.5 && lineOfSight(eye,c)){ bd=dist; best=t; } }
+    if (!best) return; this.t=best; this.time=0.4;
+    if (bd>1.5 && P.grounded && !P.ladder && !P.inCar && !P.riding){ const d=new V3(best.pos.x-P.pos.x,0,best.pos.z-P.pos.z).normalize(), sp=Math.min(9,(bd-1.1)*6); P.vel.x=d.x*sp; P.vel.z=d.z*sp; }   // lunge
+  },
+  update(dt){
+    const t=this.t; if (!t) return;
+    this.time-=dt; if (this.time<=0 || !t.alive || Arsenal.cur!=='knife' || !P.alive){ this.t=null; return; }
+    const c=chestOf(t), d=c.sub(camera.position), k=1-Math.exp(-dt*28);
+    P.yaw+=angleDiff(Math.atan2(-d.x,-d.z),P.yaw)*k; P.pitch=clamp(P.pitch+(Math.atan2(d.y,Math.hypot(d.x,d.z))-P.pitch)*k,-1.5,1.5);
+  },
+};
+// teams (Gang Wars): bots / players on your own gang are never targeted by assists or lock-ons
+function isEnemy(t){ return !(typeof Net!=='undefined' && Net.inMatch && Net.myTeam!=null && Net.teamOf(t)===Net.myTeam); }
 
 // ---------- Main loop ----------
 let last=performance.now(), fpsAcc=0, fpsN=0;
@@ -445,7 +461,7 @@ function loop(now){
     if (st==='playing'){
       Env.update(dt, camera);
       if (P.alive && !P.inCar && !P.riding){ const n=Math.ceil(dt/0.0167); for (let i=0;i<n;i++) stepPlayer(dt/n); }
-      AimLock.update(dt); AimAssist.update(dt); Rides.update(dt); Net.update(dt);
+      AimLock.update(dt); AimAssist.update(dt); KnifeLock.update(dt); Rides.update(dt); Net.update(dt);
       updateLean(dt); updateSearch(dt); updateSmoking(rdt); updateUsing(rdt); Effects.update(rdt); footsteps(dt);
       updateHealth(dt);
       Arsenal.update(dt);
@@ -471,6 +487,7 @@ function loop(now){
     Stage.update(dt); renderer.setRenderTarget(null); renderer.clear(); Stage.render(renderer);
   } else {
     if (Game.state==='loading') return;      // assets still decoding
+    if (Net.connected && !Net.inMatch){ Net._loT=(Net._loT||0)+dt; if (Net._loT>1){ Net._loT=0; Net.syncLoadout(); } }
     Menu.update(dt);
     renderer.setRenderTarget(null); renderer.clear();
     renderer.render(scene,camera);
