@@ -24,9 +24,9 @@ const WEAPON_DEFS = {
            recoil:{p:0.0125, y:0.0055, kick:0.85, pattern:[0,0.3,-0.25,0.4,-0.35,0.15,0.45,-0.4,-0.1,0.3]}, recover:7,
            reloadTime:2.3, insertAt:0.6, adsZoom:0.74, adsTime:0.15, sound:'ar15', moveMul:0.97, flash:1.1},
   // Pump shotgun (imported model): 8 pellets, devastating up close, falls off fast
-  shotgun:{name:'PUMP SHOTGUN', kind:'pump', mag:7, reserve:28, rpm:75, dmg:16, pellets:8, pelletSpread:0.05, headMul:1.5, range:45, falloff:[9,32,0.25],
+  shotgun:{name:'PUMP SHOTGUN', kind:'pump', mag:7, reserve:35, rpm:90, dmg:20, pellets:9, pelletSpread:0.04, headMul:1.5, range:50, falloff:[12,38,0.35],   // buffed (was 16 dmg x 8, spread 0.05, falloff 9-32 m)
            spreadHip:0.012, spreadAds:0.006, spreadMove:0.02,
-           recoil:{p:0.06, y:0.012, kick:1.8}, recover:3.5, reloadTime:3.0, insertAt:0.72, adsZoom:0.82, adsTime:0.18, sound:'shotgun', moveMul:0.95, flash:1.5, pumpTime:0.62},
+           recoil:{p:0.06, y:0.012, kick:1.8}, recover:3.5, reloadTime:2.7, insertAt:0.62, adsZoom:0.82, adsTime:0.18, sound:'shotgun', moveMul:0.97, flash:1.5, pumpTime:0.5},
   knife:  {name:'KNIFE', kind:'melee', dmg:55, heavyDmg:100, range:2.4, rate:0.48, heavyRate:1.0, moveMul:1.08},
 };
 const GLOCK_SWITCH_RPM = 1100;

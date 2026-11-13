@@ -40,14 +40,17 @@ const DEFAULT_SETTINGS = {
   name: 'PLAYER',
   bob: 60,               // first-person head bob strength (0 = off)
   blur: 'off',          // motion blur: 'off' | 'subtle' | 'auto' (subtle on Medium/High)
-  fov: 90,               // 60..120
+  fov: 120,              // 60..120 (maxed by default)
+  aimAssist: 'normal',   // 'off' | 'normal' | 'strong': helps once you are already aiming at someone
   botsFire: true,        // test bots shoot back
   showFps: true,
 };
 const Settings = Object.assign({}, DEFAULT_SETTINGS, Store.get('settings', {}));
 if (Settings.blur==='auto') Settings.blur='off';
 if (!['none','cross','dotS','dotM','dotL'].includes(Settings.crosshair)) Settings.crosshair='cross';   // old small/medium cross -> Cross   // old default smeared the screen
-Settings.fov = clamp(Math.round(+Settings.fov||90), 60, 120);
+Settings.fov = clamp(Math.round(+Settings.fov||120), 60, 120);
+// one-time: everyone starts on the widest first-person view and with aim assist on (both can be changed in Settings)
+if (!Store.get('fovMax', false)){ Settings.fov=120; if (!Settings.aimAssist) Settings.aimAssist='normal'; Store.set('settings', Settings); Store.set('fovMax', true); }
 if (!['potato','low','med','high'].includes(Settings.quality)) Settings.quality='low';
 /* Performance helpers: one place that turns the settings into what each system should do.
    Super Performance Mode wins over everything; otherwise each option is used as chosen. */
@@ -79,7 +82,7 @@ const Bus = { h:{}, on(e,f){ (this.h[e]=this.h[e]||[]).push(f); }, emit(e,...a){
    Esc is reserved by the browser for releasing the mouse, so Pause also always works on Esc. */
 const ACTIONS = [
   ['forward','Move forward','KeyW'],['back','Move back','KeyS'],['left','Move left','KeyA'],['right','Move right','KeyD'],
-  ['jump','Jump / vault','Space'],['sprint','Sprint','ShiftLeft'],['crouch','Crouch','ControlLeft'],['slide','Slide (while sprinting)','KeyC'],['prone','Prone (toggle)','KeyZ'],
+  ['jump','Jump / vault','Space'],['sprint','Sprint','ShiftLeft'],['crouch','Crouch','KeyC'],['slide','Slide (while sprinting)','KeyC'],['prone','Prone (toggle)','KeyZ'],
   ['fire','Shoot / attack','Mouse0'],['aim','Aim / heavy stab','Mouse2'],['reload','Reload','KeyR'],
   ['firearm','Firearm','Digit1'],['knife','Knife','Digit2'],['firemode','Glock fire mode (Switch)','KeyB'],
   ['interact','Interact / search / pick up','KeyF'],['leanL','Lean left','KeyQ'],['leanR','Lean right','KeyE'],
@@ -99,6 +102,12 @@ const RM = (x, z) => [RMv(x), RMv(z)];
 const DEFAULT_BINDS = Object.fromEntries(ACTIONS.map(a=>[a[0],a[2]]));
 const Binds = Object.assign({}, DEFAULT_BINDS, Store.get('binds', {}));
 function saveBinds(){ Store.set('binds', Binds); }
+/* Ctrl as crouch closed the game tab: Ctrl+W (crouch + forward) is a browser shortcut no page can block, and on
+   Chromebooks Ctrl+Shift+Q signs you out. One-time move: anyone still on the old Ctrl crouch gets C (C = crouch,
+   C while sprinting = slide). */
+const CROUCH_MOVED = !Store.get('crouchFix', false) && (Binds.crouch==='ControlLeft' || Binds.crouch==='ControlRight');
+if (CROUCH_MOVED){ Binds.crouch='KeyC'; saveBinds(); }
+Store.set('crouchFix', true);
 /* "Recommended controls": the developer's own setup, applied with one button in Settings → Controls.
    Only the keys listed here change; anything not listed keeps the player's current key. (Fill in from the
    developer menu's "Copy my controls".) */

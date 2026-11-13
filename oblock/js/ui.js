@@ -524,6 +524,8 @@ const UI = {
       seg('Bots target you','botsFire',[[true,'On'],[false,'Off']]);
     } else {
       slider('Mouse sensitivity','sens',0.2,3,0.05,v=>v.toFixed(2)+'×');
+      seg('Aim assist','aimAssist',[['off','Off'],['normal','Normal'],['strong','Strong']]);
+      box.appendChild(el('p','hint','Aim assist only helps once your crosshair is already on someone: it slows your aim over them and pulls toward them while you aim or shoot. It never jumps to the next player by itself.'));
       seg('Lean (Q / E)','leanMode',[['hold','Hold'],['toggle','Toggle']]);
       seg('Crouch','crouchMode',[['hold','Hold'],['toggle','Toggle']],()=>{ P.crouchToggle=false; });
       if (RECOMMENDED_CONTROLS){ const r=el('div','srow'); r.appendChild(el('label','','Recommended controls')); const s=el('div','seg'); const b=el('button','','APPLY');

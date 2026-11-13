@@ -281,7 +281,7 @@ addEventListener('mousemove',e=>{
   if (performance.now()<lookMuteUntil) return;                                        // just after a lock / fullscreen change
   if (Math.abs(e.movementX)>400 || Math.abs(e.movementY)>400) return;                 // bogus jump (Chrome/ChromeOS bug)
   // sensitivity scales with the zoom (FOV narrows by the same factor), so the view moves at the same angular rate on screen
-  const k=0.0022*Settings.sens*lerp(1, Arsenal.def.adsZoom||1, Arsenal.adsK);
+  const k=0.0022*Settings.sens*lerp(1, Arsenal.def.adsZoom||1, Arsenal.adsK)*AimAssist.slow;   // aim assist friction while on a target
   P.yaw -= e.movementX*k; P.pitch = clamp(P.pitch - e.movementY*k, -1.5, 1.5);
   VM.addLook(e.movementX, e.movementY);
 });
@@ -293,6 +293,22 @@ addEventListener('keydown',e=>{
   if (e.repeat){ Input.down[e.code]=true; return; }
   Input.down[e.code]=true; actionsFor(e.code).forEach(pressAction);
   if (e.code==='Escape' && dragLook) Game.pause();
+});
+/* Keep the game tab from closing by accident during a match:
+   - "Leave site?" confirmation when the tab is about to close (Ctrl+W, Ctrl+Q, closing the window) while in a match or room;
+   - in fullscreen the game keys are locked to the game (Keyboard Lock), so Ctrl+W / Ctrl+Q / Ctrl+T / Ctrl+N / Ctrl+R
+     go to the game instead of the browser. Esc is left alone so it still leaves fullscreen. */
+addEventListener('beforeunload',e=>{
+  const busy = ['playing','pause','qload','end'].includes(Game.state) || (typeof Net!=='undefined' && (Net.inMatch || Net.room)) || (Game.state==='settings' && UI.settingsReturn==='pause');
+  if (busy){ e.preventDefault(); e.returnValue=''; return ''; }
+});
+for (const ev of ['fullscreenchange','webkitfullscreenchange']) document.addEventListener(ev,()=>{
+  const kb=navigator.keyboard; if (!kb || !kb.lock) return;
+  if (document.fullscreenElement||document.webkitFullscreenElement){
+    const keys=new Set(['KeyW','KeyQ','KeyT','KeyN','KeyR','KeyL','KeyD','KeyH','KeyJ','KeyF','Tab','Digit1','Digit2','Digit3','Space']);
+    for (const c of Object.values(Binds)) if (c && !c.startsWith('Mouse') && c!=='Escape') keys.add(c);
+    kb.lock([...keys]).catch(()=>{});
+  } else { try { kb.unlock(); } catch(e){} }
 });
 addEventListener('keyup',e=>{ Input.down[e.code]=false; actionsFor(e.code).forEach(releaseAction); });
 addEventListener('blur',()=>{ for (const k in Input.down) Input.down[k]=false; Arsenal.trigger=false; UI.tabHeld=false; UI.scoreboard&&UI.scoreboard(false); });
@@ -382,6 +398,38 @@ const AimLock = {
   },
 };
 
+/* Aim assist (Settings → Controls, on by default for everyone). It never picks a target for you: it only helps once
+   your crosshair is already close to someone (a few degrees), by slowing your aim while it is over them ("friction")
+   and, while you aim down sights or shoot, gently pulling toward them. It sticks to that one target; after that target
+   goes down or you move well off it there is a short pause, and the next person must be aimed at first.
+   The developer aim lock overrides it while that is on. */
+const AimAssist = {
+  cur:null, slow:1, cool:0,
+  CFG:{ normal:{cone:0.075, keep:0.13, pull:6, slow:0.62}, strong:{cone:0.1, keep:0.17, pull:10, slow:0.5} },
+  angleTo(t, eye, fwd){ let best=9, bp=null;
+    for (const p of [chestOf(t), AimLock.point(t,true)]){ const d=p.clone().sub(eye), L=d.length(); if (L<0.5 || L>180) continue; const a=Math.acos(clamp(d.dot(fwd)/L,-1,1)); if (a<best){ best=a; bp=p; } }
+    return {a:best, p:bp}; },
+  update(dt){
+    this.slow=1; const C=this.CFG[Settings.aimAssist];
+    if (!C || (Dev.enabled && Dev.aim!=='off') || Game.state!=='playing' || !P.alive || Arsenal.cur==='knife' || P.inCar){ this.cur=null; return; }
+    if (this.cur && !this.cur.alive){ this.cur=null; this.cool=0.45; }
+    if (this.cool>0){ this.cool-=dt; return; }
+    const eye=camera.position, fwd=new V3(-Math.sin(P.yaw)*Math.cos(P.pitch), Math.sin(P.pitch), -Math.cos(P.yaw)*Math.cos(P.pitch));
+    let hit=null;
+    if (this.cur){ const r=this.angleTo(this.cur, eye, fwd); if (r.p && r.a<C.keep && lineOfSight(eye, r.p)) hit={t:this.cur, ...r}; else { this.cur=null; this.cool=0.25; return; } }
+    else {
+      const list=[]; for (const b of Bots.list) if (b.alive && b.rig) list.push(b); if (Net.inMatch) for (const e of Net.targets()) if (e.rig) list.push(e);
+      for (const t of list){ const r=this.angleTo(t, eye, fwd); if (r.p && r.a<C.cone && (!hit || r.a<hit.a) && lineOfSight(eye, r.p)) hit={t, ...r}; }
+      if (!hit) return; this.cur=hit.t;
+    }
+    this.slow=C.slow;
+    if (Arsenal.ads || Arsenal.trigger){
+      const d=hit.p.clone().sub(eye), k=1-Math.exp(-dt*C.pull);
+      P.yaw+=angleDiff(Math.atan2(-d.x,-d.z),P.yaw)*k; P.pitch=clamp(P.pitch+(Math.atan2(d.y,Math.hypot(d.x,d.z))-P.pitch)*k,-1.5,1.5);
+    }
+  },
+};
+
 // ---------- Main loop ----------
 let last=performance.now(), fpsAcc=0, fpsN=0;
 function loop(now){
@@ -397,7 +445,7 @@ function loop(now){
     if (st==='playing'){
       Env.update(dt, camera);
       if (P.alive && !P.inCar && !P.riding){ const n=Math.ceil(dt/0.0167); for (let i=0;i<n;i++) stepPlayer(dt/n); }
-      AimLock.update(dt); Rides.update(dt); Net.update(dt);
+      AimLock.update(dt); AimAssist.update(dt); Rides.update(dt); Net.update(dt);
       updateLean(dt); updateSearch(dt); updateSmoking(rdt); updateUsing(rdt); Effects.update(rdt); footsteps(dt);
       updateHealth(dt);
       Arsenal.update(dt);
@@ -432,6 +480,7 @@ function loop(now){
 
 // ---------- Boot ----------
 UI.show('loading');
+if (CROUCH_MOVED){ const iv=setInterval(()=>{ if (Game.state==='playing'){ clearInterval(iv); setTimeout(()=>UI.toast('CROUCH IS NOW C · CTRL+W WAS CLOSING THE GAME TAB','warn'), 1500); } }, 500); }
 setTimeout(()=>{
   mapInfo = buildMap(scene);
   skyGroup = skyline(scene);
