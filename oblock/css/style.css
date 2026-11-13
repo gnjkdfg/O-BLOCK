@@ -410,3 +410,12 @@ input[type=text]{background:var(--graph);border:1px solid var(--line2);color:var
 #mainnav .m-full .sk{border:1px solid rgba(214,173,74,.85);background:linear-gradient(180deg,rgba(40,34,20,.92),rgba(20,18,12,.92))}
 #mainnav .m-full .ic,#mainnav .m-full .tx b{color:var(--gold2)}
 #mainnav .m-full:hover .sk{background:linear-gradient(180deg,rgba(62,52,26,.95),rgba(28,24,14,.95))}
+
+/* "CLICK TO AIM": shown when the browser dropped the mouse capture (e.g. right after switching fullscreen on a Chromebook) */
+#lockhint{position:fixed;left:50%;top:58%;transform:translate(-50%,-50%);z-index:60;pointer-events:none;display:none;
+  padding:10px 18px;background:rgba(10,10,10,.78);border:1px solid rgba(255,255,255,.25);color:#fff;font:700 15px/1 var(--body,sans-serif);letter-spacing:.12em}
+#lockhint.on{display:block}
+/* Super Performance Mode: no text shadows or transitions on the HUD (cheaper page painting on weak computers) */
+body.superperf #hud *{text-shadow:none}
+body.superperf *{transition:none!important}
+.srow.dim{opacity:.4;pointer-events:none}
