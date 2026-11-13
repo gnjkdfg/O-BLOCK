@@ -33,15 +33,22 @@ const Rides = {
     for (const v of this.list){
       let x=v.home.x, z=v.home.z;
       if (!pointFree(x,z,0.05,1.2,0.6) || !Nav.walkable(x,z)){ const f=Nav.nearestFree(x,z,8); if (f){ x=f[0]; z=f[1]; } }
-      v.pos.set(x,0,z); v.yaw=v.home.yaw; v.speed=0; v.steer=0; v.rider=null; v.lean=0; this.place(v);
+      v.pos.set(x,0,z); v.yaw=v.home.yaw; v.speed=0; v.steer=0; v.rider=null; v.lean=0; v.tpos=null; this.place(v);
     }
+    this.pendingId=null;
     if (P.riding) this.dismount(true);
   },
   place(v){ v.root.position.copy(v.pos); v.root.rotation.set(0, v.yaw, 0); v.root.rotateZ(v.lean); },
+  byId(id){ return this.list.find(v=>v.id===id); },
   near(){ let best=null, bd=1.7; for (const v of this.list){ if (v.rider) continue; const d=Math.hypot(v.pos.x-P.pos.x, v.pos.z-P.pos.z); if (d<bd && Math.abs(v.pos.y-P.pos.y)<1){ bd=d; best=v; } } return best; },
   tryMount(){
     if (!P.alive || P.riding || P.inCar || P.smoking || P.using || Perks.busy() || P.prone) return false;
     const v=this.near(); if (!v) return false;
+    // online the server decides who gets on (two players can't take the same one); we mount when it says yes
+    if (Net.inMatch){ if (this.pendingId) return true; this.pendingId=v.id; Net.send({t:'ride', id:v.id, on:true}); setTimeout(()=>{ if (this.pendingId===v.id) this.pendingId=null; },2500); return true; }
+    return this.mountLocal(v);
+  },
+  mountLocal(v){
     v.rider='player'; P.riding=v; P.crouch=false; P.prone=false; endSlide(); P.vel.set(0,0,0); P.yaw=v.yaw; P.height=v.S.stand?1.7:1.3;
     Snd.click(0,700,0.3,'vehicles'); this.startSound(); Bus.emit('toast',{t:'ON THE '+v.S.name+' · '+Input.label(Binds.interact)+' TO GET OFF',kind:''});
     return true;
@@ -55,13 +62,30 @@ const Rides = {
     if (!spot && !force){ Bus.emit('toast',{t:'NO ROOM TO GET OFF HERE',kind:'warn'}); return; }
     if (spot){ P.pos.x=spot[0]; P.pos.z=spot[1]; }
     P.pos.y=v.pos.y; P.vel.set(0,0,0); P.height=1.7; P.riding=null; v.rider=null; v.speed=0; v.lean=0; this.place(v);
+    if (Net.inMatch) Net.send({t:'ride', id:v.id, on:false, v:[+v.pos.x.toFixed(2),+v.pos.y.toFixed(2),+v.pos.z.toFixed(2),+v.yaw.toFixed(3)]});
     this.stopSound(); Snd.click(0,600,0.25,'vehicles');
   },
   startSound(){ if (!this.snd) this.snd=Snd.play('scooter_loop',{cat:'vehicles', vol:0.0, loop:true, max:1}); },
   stopSound(){ if (this.snd){ Snd.stop(this.snd,0.2); this.snd=null; } },
   // steering is locked while firing
   steerLocked(){ return Arsenal.trigger && Arsenal.cur!=='knife' && Arsenal.canFire(); },
+  // ---- online: the server's answer to get on/off, and every vehicle's live position from the snapshots
+  netRide(m){
+    const v=this.byId(m.id); if (!v) return;
+    if (m.rider===Net.id){ if (this.pendingId===v.id){ this.pendingId=null; if (P.alive && !P.riding){ v.pos.set(m.x,m.y,m.z); v.yaw=m.yaw; v.tpos=null; this.mountLocal(v); } } return; }
+    if (m.rider){ if (P.riding===v) this.dismount(true); v.rider=m.rider; return; }       // someone else got on
+    if (P.riding!==v){ v.rider=null; v.speed=0; v.lean=0; v.pos.set(m.x,m.y,m.z); v.yaw=m.yaw; v.tpos=null; this.place(v); }
+  },
+  netSnap(rides){
+    for (const [id,x,y,z,yaw,lean,rider] of rides){ const v=this.byId(id); if (!v || v===P.riding) continue;
+      v.rider = rider && rider!==Net.id ? rider : (rider===Net.id ? v.rider : null);
+      if (!v.tpos) v.tpos=new V3(x,y,z); else v.tpos.set(x,y,z); v.tyaw=yaw; v.tlean=lean; }
+  },
   update(dt){
+    // other players' vehicles: smoothly follow the server snapshots
+    for (const o of this.list){ if (o===P.riding || !o.tpos) continue;
+      if (o.pos.distanceTo(o.tpos)>6) o.pos.copy(o.tpos); else o.pos.lerp(o.tpos, 1-Math.exp(-dt/NET_CFG.interp));
+      o.yaw+=angleDiff(o.tyaw,o.yaw)*Math.min(1,dt*12); o.lean=damp(o.lean, o.tlean||0, 10, dt); this.place(o); }
     const v=P.riding;
     if (v){
       const S=v.S, f=(Input.held('forward')?1:0)-(Input.held('back')?1:0), r=(Input.held('right')?1:0)-(Input.held('left')?1:0);

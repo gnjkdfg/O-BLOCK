@@ -15,10 +15,14 @@
 const PROG = {
   xpPerLevel: 1000,                       // flat: every level costs 1,000 XP; levels keep going past 100
   xp:   { kill:100, win:250, participation:50, objective:100, objectiveCap:5, holdWin:250, zaWin:250 },
-  cash: { win:100, kill:10, second:50, third:25, participation:10 },
+  cash: { win:100, kill:10, second:50, third:25, participation:10, level:25 },   // level: paid for every level gained
   carHop: { chance:1/3, min:1, max:20, cooldown:120 },          // per vehicle, seconds
-  unlock: { glock:0, drako:10, sniper:20, shotgun:50, ar15:100 },  // level required
-  price:  { switch:500, jeff:1000, cop:5000 },
+  unlock: {},                             // (Update 6) no level locks any more: guns and attachments are bought with cash
+  price:  { switch:500, jeff:1000, cop:5000,
+            drako:250, sniper:500, shotgun:750, ar15:1250,                                  // guns (the Glock and knife are free)
+            'att:dot_open':100, 'att:dot_closed':125, 'att:scope15':200, 'att:scope25':300, 'att:vgrip':100, 'att:brace':125,
+            'att:skeleton':150, 'att:folding':175, 'att:suppressor':250, 'att:compensator':125, 'att:laser':75, 'att:flashlight':75,
+            'att:mag_ext':150, 'att:mag_drum':300 },                                       // attachments: bought once, fit every gun they're made for
 };
 const levelOf = xp => 1 + Math.floor(Math.max(0,xp) / PROG.xpPerLevel);
 const fmtCash = n => '$' + Math.floor(n).toLocaleString('en-US');
@@ -27,7 +31,13 @@ const ProfileAuthority = {
   s:null, match:null, log:[],
   load(){
     const d = Store.get('profile', null) || {};
-    this.s = { cash: d.cash|0, xp: d.xp|0, owned: Object.assign({switch:false, jeff:false, cop:false}, d.owned||{}), paid: (d.paid||[]).slice(-50), unlimited: !!d.unlimited };
+    this.s = { cash: d.cash|0, xp: d.xp|0, owned: Object.assign({switch:false, jeff:false, cop:false}, d.owned||{}), paid: (d.paid||[]).slice(-50), unlimited: !!d.unlimited, v6: !!d.v6 };
+    // one-time move to the cash economy: guns you had already reached by level stay yours, attachments you were using stay
+    // yours, and you get the $25-per-level reward for the levels you already have
+    if (!this.s.v6){ const L=this.level(), OLD={drako:10, sniper:20, shotgun:50, ar15:100};
+      for (const w in OLD) if (L>=OLD[w]) this.s.owned[w]=true;
+      for (const id of WEAPON_ORDER) for (const a of Object.values((Store.get('wcustom',{})[id]||{}).att||{})) if (a && PROG.price['att:'+a]!==undefined) this.s.owned['att:'+a]=true;
+      this.s.cash += (L-1)*PROG.cash.level; this.s.v6=true; this.save(); }
     // characters that need buying fall back to the free one if they are not owned
     if (!this.ownsChar(CharLook.char)){ CharLook.char='tracksuit'; Object.assign(CharLook, CHARACTERS.tracksuit.defaults, Store.get('look_tracksuit',{})); }
   },
@@ -37,14 +47,15 @@ const ProfileAuthority = {
     else if (this.local){ this.s=this.local; this.local=null; }
     Bus.emit('profile');
   },
-  save(){ if (this.s.remote) return; Store.set('profile', {cash:this.s.cash, xp:this.s.xp, owned:this.s.owned, paid:this.s.paid, unlimited:this.s.unlimited}); },
+  save(){ if (this.s.remote) return; Store.set('profile', {cash:this.s.cash, xp:this.s.xp, owned:this.s.owned, paid:this.s.paid, unlimited:this.s.unlimited, v6:this.s.v6}); },
   // ---- queries
   get cash(){ return this.s.unlimited ? Infinity : this.s.cash; },
   get xp(){ return this.s.xp; },
   level(){ return levelOf(this.s.xp); },
   levelProgress(){ const x=this.s.xp%PROG.xpPerLevel; return {cur:x, need:PROG.xpPerLevel, k:x/PROG.xpPerLevel}; },
-  unlockLevel(id){ return PROG.unlock[id] ?? 0; },
-  canUse(id){ return id==='knife' || this.level() >= this.unlockLevel(id); },
+  price(item){ return PROG.price[item]; },
+  canUse(id){ return id==='knife' || id==='glock' || this.owns(id); },                     // guns: owned (bought), not level-locked
+  ownsAtt(a){ return !a || PROG.price['att:'+a]===undefined || this.owns('att:'+a); },
   owns(item){ return !!this.s.owned[item]; },
   ownsChar(id){ return !CHARACTERS[id] || !CHARACTERS[id].price || this.owns(id); },
   // ---- purchases (validated: known item, not owned, enough cash)
@@ -61,7 +72,7 @@ const ProfileAuthority = {
   addXP(n, why){
     const before=this.level(); this.s.xp += n; this.save();
     Bus.emit('xp', {n, why}); const after=this.level();
-    if (after>before){ Bus.emit('levelup', after); for (const id in PROG.unlock) if (PROG.unlock[id]>before && PROG.unlock[id]<=after) Bus.emit('unlock', id); }
+    if (after>before){ Bus.emit('levelup', after); if (!this.s.remote) this.addCash((after-before)*PROG.cash.level, 'LEVEL '+after); }   // $25 every level (online the server pays it)
     Bus.emit('profile');
   },
   addCash(n, why){ this.s.cash += n; this.save(); Bus.emit('cash', {n, why}); Bus.emit('profile'); },
@@ -101,7 +112,7 @@ const ProfileAuthority = {
     const lvl0=this.level();
     this.s.xp+=xp; this.s.cash+=cash; this.save();
     const lvl1=this.level();
-    if (lvl1>lvl0){ Bus.emit('levelup', lvl1); for (const id in PROG.unlock) if (PROG.unlock[id]>lvl0 && PROG.unlock[id]<=lvl1) Bus.emit('unlock', id); }
+    if (lvl1>lvl0){ const lc=(lvl1-lvl0)*PROG.cash.level; this.s.cash+=lc; cash+=lc; lines.push({label:'Level up ×'+(lvl1-lvl0), xp:0, cash:lc}); this.save(); Bus.emit('levelup', lvl1); }
     Bus.emit('profile');
     return {lines, xp, cash, totalXP:xp+m.earned.xp, totalCash:cash+m.earned.cash, level:lvl1, levelBefore:lvl0};
   },
@@ -121,7 +132,7 @@ const ProfileAuthority = {
     if (this.s.remote && cmd!=='testing'){ Net.send({t:'dev', cmd, arg}); return {ok:true, sent:true}; }    // online: the server decides
     const s=this.s, before={cash:s.cash, xp:s.xp};
     switch(cmd){
-      case 'unlockAll': s.xp=Math.max(s.xp,(PROG.unlock.ar15-1)*PROG.xpPerLevel); s.owned={switch:true, jeff:true, cop:true}; break;
+      case 'unlockAll': for (const k in PROG.price) s.owned[k]=true; break;
       case 'setLevel': s.xp=(Math.max(1,arg|0)-1)*PROG.xpPerLevel; break;
       case 'setXP': s.xp=Math.max(0,arg|0); break;
       case 'addCash': s.cash+=Math.max(0,arg|0); break;

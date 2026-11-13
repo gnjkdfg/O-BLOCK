@@ -62,7 +62,7 @@ const Arsenal = {
     if (!FIREARMS.includes(id)) return;
     if (Mode.allowedFirearm(id)!==id){ Bus.emit('toast',{t:'GLOCK ONLY IN '+Mode.title(),kind:'warn'}); return; }
     { const R=roomRules(); if (R && (!R.weapons.includes(id) || R.startWeapon==='glock'&&id!=='glock')){ Bus.emit('toast',{t:WEAPON_DEFS[id].name+' IS OFF IN THIS ROOM',kind:'warn'}); return; }
-      if (!(R && R.unlocks==='all') && !ProfileAuthority.canUse(id)){ Bus.emit('toast',{t:WEAPON_DEFS[id].name+' UNLOCKS AT LEVEL '+ProfileAuthority.unlockLevel(id),kind:'warn'}); return; } }
+      if (!(R && R.unlocks==='all') && !ProfileAuthority.canUse(id)){ Bus.emit('toast',{t:WEAPON_DEFS[id].name+' · BUY IT IN LOADOUT ('+fmtCash(ProfileAuthority.price(id))+')',kind:'warn'}); return; } }
     this.cancelReload(); Snd.autoStop();
     this.firearm=id; const d=weaponDef(id); if (!this.ammo[id]) this.ammo[id]={mag:d.mag,res:d.reserve}; if (Net.inMatch) Net.send({t:'equip', w:id});
     if (this.cur!=='knife') this.equip(id, true); Bus.emit('weapon', this.cur);

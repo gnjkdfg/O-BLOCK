@@ -198,7 +198,6 @@ const UI = {
     Bus.on('carhop',n=>this.toast(n>0?'FOUND '+fmtCash(n)+' IN THE CAR':'NOTHING IN THIS CAR', n>0?'ok':''));
     Bus.on('xp',e=>this.xpPop('+'+e.n+' XP'+(e.why?' · '+e.why:''),'')); Bus.on('cash',e=>this.xpPop('+'+fmtCash(e.n),'c'));
     Bus.on('levelup',l=>{ this.levelBanner('LEVEL '+l, 'LEVEL UP'); Snd.levelUp&&Snd.levelUp(); });
-    Bus.on('unlock',id=>{ setTimeout(()=>this.levelBanner(WEAPON_DEFS[id].name, 'UNLOCKED'), 1600); });
     Bus.on('profile',()=>{ this.menuInfo(); });
     Bus.on('pickup',p=>this.toast('+'+p.add+' '+p.weapon+' AMMO','ok'));
     Bus.on('healed',()=>this.toast('+30 HEALTH · MAX HEALTH +20% UNTIL DEATH','ok'));
@@ -351,8 +350,8 @@ const UI = {
     // ---- left: weapons
     const list=$('#lo-weapons'); list.innerHTML='';
     for (const wid of WEAPON_ORDER){
-      const isFire=wid!=='knife', eq = isFire ? Loadout.firearm===wid : true, n=attachmentCount(wid), ok=ProfileAuthority.canUse(wid), lv=ProfileAuthority.unlockLevel(wid);
-      const b=el('button','wcard'+(L.sel===wid?' on':'')+(ok?'':' locked'), `<img src="${(this.thumbs||{})[wid]||''}" alt=""><div><b>${WEAPON_DEFS[wid].name}</b><small>${WEAPON_CATEGORY[wid]}${isFire?' · '+n+' attachment'+(n===1?'':'s'):''}${isFire&&lv?' · level '+lv:''}</small><span class="eq ${eq&&ok?'':'no'}">${!ok?'LOCKED · REACH LEVEL '+lv:isFire?(eq?'EQUIPPED FIREARM':'NOT EQUIPPED'):'ALWAYS CARRIED'}</span></div>`);
+      const isFire=wid!=='knife', eq = isFire ? Loadout.firearm===wid : true, n=attachmentCount(wid), ok=ProfileAuthority.canUse(wid), pr=ProfileAuthority.price(wid);
+      const b=el('button','wcard'+(L.sel===wid?' on':'')+(ok?'':' locked'), `<img src="${(this.thumbs||{})[wid]||''}" alt=""><div><b>${WEAPON_DEFS[wid].name}</b><small>${WEAPON_CATEGORY[wid]}${isFire?' · '+n+' attachment'+(n===1?'':'s'):''}${isFire&&!ok&&pr?' · '+fmtCash(pr):''}</small><span class="eq ${eq&&ok?'':'no'}">${!ok?'LOCKED · BUY FOR '+fmtCash(pr):isFire?(eq?'EQUIPPED FIREARM':'NOT EQUIPPED'):'ALWAYS CARRIED'}</span></div>`);
       b.onclick=()=>{ L.sel=wid; L.slot=null; L.pick=null; Stage.showWeapon(wid); this.renderLoadout(); };
       list.appendChild(b);
     }
@@ -366,13 +365,14 @@ const UI = {
     }
     // ---- centre header
     const isFire=id!=='knife';
-    const okW=ProfileAuthority.canUse(id), lvW=ProfileAuthority.unlockLevel(id);
-    $('#lo-head').innerHTML=`<div class="wn">${WEAPON_DEFS[id].name}${okW?'':' <span class="lock">LEVEL '+lvW+'</span>'}</div><div class="wc">${WEAPON_CATEGORY[id]}</div>`+
-      (isFire ? (!okW ? `<button class="toggle" disabled>LOCKED · UNLOCKS AT LEVEL ${lvW} (YOU ARE ${ProfileAuthority.level()})</button>` : Loadout.firearm===id ? '<button class="toggle on" disabled>✓ EQUIPPED FIREARM</button>' : '<button class="toggle" id="lo-equipbtn">EQUIP AS FIREARM</button>') : '');
+    const okW=ProfileAuthority.canUse(id), prW=ProfileAuthority.price(id), haveC=ProfileAuthority.cash;
+    $('#lo-head').innerHTML=`<div class="wn">${WEAPON_DEFS[id].name}${okW?'':' <span class="lock">'+fmtCash(prW)+'</span>'}</div><div class="wc">${WEAPON_CATEGORY[id]}</div>`+
+      (isFire ? (!okW ? `<button class="toggle primary" id="lo-buyw" data-sfx="none">BUY ${WEAPON_DEFS[id].name.toUpperCase()} · ${fmtCash(prW)} (YOU HAVE ${haveC===Infinity?'∞':fmtCash(haveC)})</button>` : Loadout.firearm===id ? '<button class="toggle on" disabled>✓ EQUIPPED FIREARM</button>' : '<button class="toggle" id="lo-equipbtn">EQUIP AS FIREARM</button>') : '');
     let swBox='';
     if (id==='glock'){ const own=ProfileAuthority.owns('switch');
       swBox=(own ? `<div class="buybox"><b>GLOCK SWITCH · OWNED</b><p>Full auto (${GLOCK_SWITCH_RPM} rpm) with 15% less accuracy. Toggle in a match with ${Input.label(Binds.firemode)}.</p></div>`
         : `<div class="buybox"><b>GLOCK SWITCH · ${fmtCash(PROG.price.switch)}</b><p>Full auto (${GLOCK_SWITCH_RPM} rpm), 15% less accuracy. You have ${ProfileAuthority.cash===Infinity?'unlimited cash':fmtCash(ProfileAuthority.cash)}.</p><button class="primary" id="lo-buysw">BUY SWITCH</button></div>`); }
+    { const bw=$('#lo-buyw'); if (bw) bw.onclick=()=>this.buyItem(id, WEAPON_DEFS[id].name, ()=>{ Loadout.firearm=id; this.loStatus(WEAPON_DEFS[id].name+' bought and equipped (not saved yet)'); }); }
     const eb=$('#lo-equipbtn'); if (eb) eb.onclick=()=>{ if (!ProfileAuthority.canUse(id)) return; Loadout.firearm=id; this.loStatus('Firearm changed (not saved yet)'); this.renderLoadout(); };
     this.renderStats();
     // ---- right: attachments or paint
@@ -399,15 +399,25 @@ const UI = {
     if (!L.slot) { cards.appendChild(el('p','hint','Select a slot to see compatible attachments. Only parts that fit the '+WEAPON_DEFS[id].name+' are listed.')); return; }
     const opts=[...(SLOT_DEFAULT[L.slot]?[]:[null]), ...attachmentsFor(id, L.slot)];
     for (const key of opts){
-      const on=WCustom[id].att[L.slot]===key, A=key?ATTACHMENTS[key]:null;
+      const on=WCustom[id].att[L.slot]===key, A=key?ATTACHMENTS[key]:null, own=ProfileAuthority.ownsAtt(key), apr=key?ProfileAuthority.price('att:'+key):0;
       const deltas=this.deltas(id, L.slot, key);
-      const c=el('button','acard'+(on?' on':'')+(L.pick===key?' pick':''), `<div class="t">${A?A.name:'None'}${on?'<em>EQUIPPED</em>':''}</div><div class="d">${A?A.desc:'Remove the attachment from this slot.'}</div><div class="dl">${deltas.map(d=>`<span class="${d.cls}">${d.arrow} ${d.label} ${d.txt}</span>`).join('')||'<span class="same">— no stat changes</span>'}</div>`);
-      c.onclick=()=>{ L.pick=key; const prev=WCustom[id].att[L.slot]; if (prev!==key){ WCustom[id].att[L.slot]=key; this.rebuildPreview(L.slot, prev); this.loStatus((A?A.name+' installed':'Attachment removed')+' (not saved yet)'); } else this.renderLoadout(); };
+      const c=el('button','acard'+(on?' on':'')+(L.pick===key?' pick':''), `<div class="t">${A?A.name:'None'}${on?'<em>EQUIPPED</em>':own?'':'<em class="price">'+fmtCash(apr)+'</em>'}</div><div class="d">${A?A.desc:'Remove the attachment from this slot.'}</div><div class="dl">${deltas.map(d=>`<span class="${d.cls}">${d.arrow} ${d.label} ${d.txt}</span>`).join('')||'<span class="same">— no stat changes</span>'}</div>`);
+      if (!own) c.classList.add('locked');
+      c.onclick=()=>{ L.pick=key; if (!own){ this.renderLoadout(); return; } const prev=WCustom[id].att[L.slot]; if (prev!==key){ WCustom[id].att[L.slot]=key; this.rebuildPreview(L.slot, prev); this.loStatus((A?A.name+' installed':'Attachment removed')+' (not saved yet)'); } else this.renderLoadout(); };
       cards.appendChild(c);
     }
     const sel=L.pick!==null && L.pick!==undefined ? L.pick : WCustom[id].att[L.slot];
     if (sel){ const A=ATTACHMENTS[sel], dl=this.deltas(id,L.slot,sel);
-      det.innerHTML=`<div class="detail"><div class="h">${A.name.toUpperCase()}</div>${A.desc}<b>PROS</b><ul>${A.pros.map(x=>'<li class="up">'+x+'</li>').join('')||'<li class="same">—</li>'}</ul><b>CONS</b><ul>${A.cons.map(x=>'<li class="dn">'+x+'</li>').join('')||'<li class="same">—</li>'}</ul><b>STAT CHANGES (ACTUAL GAMEPLAY VALUES)</b><ul>${dl.map(d=>`<li class="${d.cls}">${d.label}: ${d.txt}</li>`).join('')||'<li class="same">No change</li>'}</ul></div>`; }
+      det.innerHTML=`<div class="detail"><div class="h">${A.name.toUpperCase()}</div>${A.desc}<b>PROS</b><ul>${A.pros.map(x=>'<li class="up">'+x+'</li>').join('')||'<li class="same">—</li>'}</ul><b>CONS</b><ul>${A.cons.map(x=>'<li class="dn">'+x+'</li>').join('')||'<li class="same">—</li>'}</ul><b>STAT CHANGES (ACTUAL GAMEPLAY VALUES)</b><ul>${dl.map(d=>`<li class="${d.cls}">${d.label}: ${d.txt}</li>`).join('')||'<li class="same">No change</li>'}</ul></div>`+(ProfileAuthority.ownsAtt(sel)?'':`<div class="buybox"><b>${A.name.toUpperCase()} · ${fmtCash(ProfileAuthority.price('att:'+sel))}</b><p>Buy once, use it on every gun it fits. You have ${ProfileAuthority.cash===Infinity?'unlimited cash':fmtCash(ProfileAuthority.cash)}.</p><button class="primary" id="lo-buyatt" data-sfx="none">BUY &amp; INSTALL</button></div>`);
+      const ba=$('#lo-buyatt'); if (ba) ba.onclick=()=>this.buyItem('att:'+sel, A.name, ()=>{ const prev=WCustom[id].att[L.slot]; WCustom[id].att[L.slot]=sel; this.rebuildPreview(L.slot, prev); this.loStatus(A.name+' bought and installed (not saved yet)'); }); }
+  },
+  // purchases from the loadout (offline: local profile; online: the server checks the price and your cash)
+  buyItem(item, name, then){
+    const r=ProfileAuthority.buy(item);
+    if (r.ok){ this.toast(name.toUpperCase()+' BOUGHT','ok'); Snd.uiSfx('buy'); if (then) then(); }
+    else if (r.pending){ this._afterBuy={item, then}; }
+    else { this.toast('CAN\'T BUY: '+r.why.toUpperCase(),'warn'); Snd.uiSfx('deny'); }
+    this.renderLoadout();
   },
   // gameplay stats used for display (all from weaponStats, the same function gameplay uses)
   statRows(d){
@@ -451,7 +461,7 @@ const UI = {
     const draw=()=>{ b.querySelectorAll('.qrow').forEach(x=>x.remove());
       for (const id of FIREARMS){ const ok=Mode.allowedFirearm(id)===id && ProfileAuthority.canUse(id), cfg=WCustomSaved[id];
         const sum=WEAPON_SLOTS[id].map(s=>cfg.att[s]).filter(a=>a && a!=='iron' && a!=='mag_std').map(a=>ATTACHMENTS[a].name).join(', ')||'No attachments';
-        const r=el('button','qrow'+(this.qlPick===id?' on':'')+(ok?'':' locked'), `<b>${WEAPON_DEFS[id].name}</b><small>${ProfileAuthority.canUse(id)?sum:'Unlocks at level '+ProfileAuthority.unlockLevel(id)}</small><small>${this.qlPick===id?'SELECTED':Arsenal.firearm===id?'CURRENT':''}</small>`);
+        const r=el('button','qrow'+(this.qlPick===id?' on':'')+(ok?'':' locked'), `<b>${WEAPON_DEFS[id].name}</b><small>${ProfileAuthority.canUse(id)?sum:'Buy in Loadout · '+fmtCash(ProfileAuthority.price(id))}</small><small>${this.qlPick===id?'SELECTED':Arsenal.firearm===id?'CURRENT':''}</small>`);
         r.disabled=!ok; r.onclick=()=>{ this.qlPick=id; draw(); }; b.insertBefore(r, b.querySelector('.qknife')); } };
     b.appendChild(el('div','qrow qknife','<b>KNIFE</b><small>Always available · '+Input.label(Binds.knife)+'</small><small></small>'));
     draw();

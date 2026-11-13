@@ -26,8 +26,10 @@ class RemoteEnt {
     const prev=this.pos.clone(); this.pos.lerp(this.tpos, 1-Math.exp(-dt/NET_CFG.interp)); this.vel.copy(this.pos).sub(prev).divideScalar(Math.max(dt,1e-3)); this.speed=Math.hypot(this.vel.x,this.vel.z);
     this.yaw+=angleDiff(this.tyaw,this.yaw)*Math.min(1,dt*12);
     const rg=this.rig; rg.root.visible=this.alive; if (!this.alive) return;
+    if (this.ride){ const v=this.ride; this.pos.set(v.pos.x, v.pos.y+v.S.deck, v.pos.z); this.yaw=v.yaw; }   // riding: stand / sit on the vehicle
     rg.root.position.copy(this.pos); rg.root.rotation.y=this.yaw; this.label.s.visible=this.pos.distanceTo(camera.position)<40;
     const inv=this.vel.clone().applyAxisAngle(new V3(0,1,0),-this.yaw);
+    if (this.ride){ animateCharacter(rg,{speed:0, sit:!this.ride.S.stand, pitch:this.pitch, hold:{weapon:this.weapon, firing:true}}, dt); return; }
     animateCharacter(rg,{speed:this.speed, moveX:inv.x, moveZ:inv.z, sprint:this.speed>6, crouch:this.crouch, pitch:this.pitch, hold:{weapon:this.weapon, firing:true}}, dt);
   }
   chest(){ return new V3(this.pos.x, this.pos.y+(this.crouch?0.8:1.15), this.pos.z); }
@@ -61,10 +63,11 @@ const Net = {
     switch(m.t){
       case 'devauth': { const cb=this._devCb; this._devCb=null; if (m.ok) this.dev=true; if (cb) cb({ok:!!m.ok, remote:true, why:m.ok?'':m.why}); break; }
       case 'welcome': this.id=m.id; this.dev=m.dev; ProfileAuthority.useRemote(m.profile); Lobby.render(); UI.menuInfo(); break;
-      case 'profile': ProfileAuthority.useRemote(m.profile); if (m.xp) Bus.emit('xp',{n:m.xp, why:m.why}); if (m.cash) Bus.emit('cash',{n:m.cash, why:m.why}); if (m.bought) Bus.emit('toast',{t:'PURCHASED · '+m.bought.toUpperCase(),kind:'ok'}); UI.menuInfo(); break;
+      case 'profile': ProfileAuthority.useRemote(m.profile); if (m.xp) Bus.emit('xp',{n:m.xp, why:m.why}); if (m.cash) Bus.emit('cash',{n:m.cash, why:m.why}); if (m.bought){ Bus.emit('toast',{t:'PURCHASED · '+m.bought.replace('att:','').toUpperCase(),kind:'ok'}); Snd.uiSfx('buy'); const ab=UI._afterBuy; if (ab && ab.item===m.bought){ UI._afterBuy=null; if (ab.then) ab.then(); } if (Game.state==='loadout') UI.renderLoadout(); } UI.menuInfo(); break;
       case 'room': this.room=m; this.isHost=m.host===this.id; Lobby.render(); break;
       case 'error': this.err=m.why; Lobby.render(); break;
-      case 'reject': if (m.what!=='hits') Bus.emit('toast',{t:'SERVER: '+m.what.toUpperCase()+' REJECTED · '+m.why.toUpperCase(),kind:'warn'}); else this.rejected=(this.rejected||0)+1; break;
+      case 'ride': Rides.netRide(m); break;
+      case 'reject': if (m.what==='ride') Rides.pendingId=null; if (m.what!=='hits') Bus.emit('toast',{t:'SERVER: '+m.what.toUpperCase()+' REJECTED · '+m.why.toUpperCase(),kind:'warn'}); else this.rejected=(this.rejected||0)+1; break;
       case 'start': this.startMatch(m); break;
       case 'snap': this.snap(m); break;
       case 'hit': this.onHit(m); break;
@@ -120,6 +123,7 @@ const Net = {
       const b=Bots.list.find(x=>x.netId===a[0]); if (b){ b.kills=a[9]; b.deaths=a[10]; continue; }
       const e=this.ents.get(a[0]); if (e) e.snap(a);
     }
+    if (m.rides){ Rides.netSnap(m.rides); for (const e of this.ents.values()) e.ride=Rides.list.find(v=>v.rider===e.id)||null; }
     if (m.za){ this.za=m.za; const s=BackpackAuthority.s; if (s){ const toLocal=id=> id===this.id ? 'player' : id; s.carrier=m.za.carrier?toLocal(m.za.carrier):null; s.x=m.za.x; s.y=m.za.y; s.z=m.za.z; s.atHome=m.za.atHome; s.hold={}; for (const k in m.za.hold) s.hold[toLocal(k)]=m.za.hold[k]; } }
   },
   onHit(m){
@@ -152,7 +156,7 @@ const Net = {
   update(dt){
     if (!this.inMatch) return;
     const now=performance.now();
-    if (now-this.lastSt>1000/NET_CFG.stateHz && P.alive){ this.lastSt=now; this.send({t:'st', p:[+P.pos.x.toFixed(2),+P.pos.y.toFixed(2),+P.pos.z.toFixed(2)], yaw:+P.yaw.toFixed(3), pitch:+P.pitch.toFixed(3), f:(P.crouch||P.prone)?1:0}); }
+    if (now-this.lastSt>1000/NET_CFG.stateHz && P.alive){ this.lastSt=now; this.send({t:'st', p:[+P.pos.x.toFixed(2),+P.pos.y.toFixed(2),+P.pos.z.toFixed(2)], yaw:+P.yaw.toFixed(3), pitch:+P.pitch.toFixed(3), f:(P.crouch||P.prone)?1:0, v:P.riding?[+P.riding.pos.x.toFixed(2),+P.riding.pos.y.toFixed(2),+P.riding.pos.z.toFixed(2),+P.riding.yaw.toFixed(3),+P.riding.lean.toFixed(3)]:undefined}); }
     if (this.isHost && now-this.lastBots>1000/NET_CFG.botHz){ this.lastBots=now;
       this.send({t:'bots', list:Bots.list.filter(b=>b.netId && b.alive).map(b=>({id:b.netId, p:[+b.pos.x.toFixed(2),+b.pos.y.toFixed(2),+b.pos.z.toFixed(2)], yaw:+b.yaw.toFixed(3), pitch:0, w:b.fw, char:b.rig.charId, f:b.crouch?1:0}))}); }
     for (const e of this.ents.values()) e.update(dt);
@@ -241,7 +245,7 @@ const Lobby = {
         break;
       case 'loadout':
         row('Weapons allowed', checks('weapons', MODE_RULES[S.mode].firearms.map(w=>[w,WEAPON_DEFS[w].name])), 'the knife is always allowed');
-        row('Weapon unlocks', drop('unlocks',[['levels','Respect each player\'s level'],['all','Everything unlocked in this room']]));
+        row('Weapon unlocks', drop('unlocks',[['levels','Only guns each player owns'],['all','Every gun free in this room']]));
         row('Starting weapon', drop('startWeapon',[['loadout','Each player\'s loadout'],['glock','Glock only'],['random','Random allowed weapon']]));
         row('Characters allowed', checks('chars', CHAR_ORDER.map(c=>[c,CHARACTERS[c].name])), 'others play as Masked Tracksuit');
         row('Consumables', toggle('items'), 'trunk loot, blunt, beer, Zyn');
@@ -295,6 +299,7 @@ function exportSharedData(){
     items:ITEMS, loot:LOOT_TABLE, spawns:SPAWN_POINTS.map(s=>[+s[0].toFixed(2),+s[1].toFixed(2),+(s[2]||0).toFixed(3)]), zaSpawns:ZA_SPAWNS.filter(p=>p.y>0.3||pointFree(p.x,p.z,0.15,1.6,0.5)), modes:MODE_RULES,
     matchDefaults:MATCH_DEFAULTS, zaDefaults:ZA_DEFAULTS,
     colliders:colliders.filter(c=>!c.nb && !c.glass).concat(bulletCols).map(c=>[+c.cx.toFixed(3),+c.cz.toFixed(3),+c.hx.toFixed(3),+c.hz.toFixed(3),+c.y0.toFixed(3),+c.y1.toFixed(3),+c.yaw.toFixed(4)]),   // what stops bullets (see-through fence bodies excluded, their posts/rails included)
+    rides:Rides.list.map(v=>({id:v.id, kind:v.kind, x:+v.pos.x.toFixed(2), z:+v.pos.z.toFixed(2), yaw:+v.home.yaw.toFixed(3)})),   // parking spots after validation (same as Rides.reset)
     cars:interactCars.map(c=>({name:c.name, x:+c.F.x.toFixed(2), z:+c.F.z.toFixed(2)})),
     trunks:searchables.map((s,i)=>{ const [x,z]=toWorld(s.F,-s.L/2-0.7,0); return {id:i, x:+x.toFixed(2), z:+z.toFixed(2)}; })});
 }
