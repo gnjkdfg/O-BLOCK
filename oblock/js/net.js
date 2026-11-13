@@ -6,6 +6,7 @@
    Note: browsers only allow a secure page (https) to open secure sockets (wss://). A page served over https can't
    reach a plain ws:// server, and some hosting sandboxes block outside connections entirely. */
 const NET_CFG = { stateHz:20, botHz:10, interp:0.12 };
+const NET_DEFAULT_URL = 'wss://oblock-multiplayer.onrender.com';
 
 class RemoteEnt {
   constructor(d){
@@ -164,7 +165,7 @@ const Net = {
 // ---------------------------------------------------------------- lobby screen
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const Lobby = {
-  open(){ this.render(); },
+  open(){ if (!Net.connected && (!Net.ws || Net.ws.readyState===WebSocket.CLOSED)) Net.connect(Settings.server||NET_DEFAULT_URL); this.render(); },
   leave(){ if (Net.room) Net.send({t:'leave'}); Net.room=null; },
   render(status){
     const box=document.getElementById('on-body'); if (!box || Game.state!=='online') return;
@@ -172,7 +173,7 @@ const Lobby = {
     let h='';
     if (!Net.connected){
       h+=`<div class="note">Online private matches need the <b>O-Block game server</b> (the <code>server/</code> folder that comes with the game: <code>npm install</code>, then <code>node server.js</code>). Enter its address below. There is no public server built in, and this screen never pretends to be connected.<br><small>An https page can only reach a <code>wss://</code> server; some hosting sandboxes block outside connections completely.</small></div>
-        <div class="row"><input type="text" id="on-url" placeholder="ws://localhost:8787" value="${esc(Settings.server||'')}"><button class="primary" id="on-connect">CONNECT</button></div>
+        <div class="row"><input type="text" id="on-url" placeholder="ws://localhost:8787" value="${esc(Settings.server||NET_DEFAULT_URL)}"><button class="primary" id="on-connect">CONNECT</button></div>
         ${status?`<p class="hint">${esc(status)}</p>`:''}${Net.err?`<p class="err">${esc(Net.err)}</p>`:''}`;
       box.innerHTML=h;
       document.getElementById('on-connect').onclick=()=>{ const u=document.getElementById('on-url').value.trim(); if (!/^wss?:\/\//.test(u)){ Net.err='The address must start with ws:// or wss://'; this.render(); return; } Settings.server=u; saveSettings(); Net.connect(u); };
