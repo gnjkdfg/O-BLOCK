@@ -36,7 +36,7 @@ let saveT = null; const saveProfiles = () => { clearTimeout(saveT); saveT = setT
 const levelOf = xp => 1 + Math.floor(Math.max(0, xp) / S.prog.xpPerLevel);
 function profileOf(token){ const p = profiles[token] || (profiles[token] = { cash:0, xp:0, owned:{switch:false, jeff:false, cop:false}, paid:[], v6:true }); migrateV6(p); return p; }
 function pubProfile(p){ return { cash:p.cash, xp:p.xp, level:levelOf(p.xp), owned:p.owned }; }
-function canUse(p, w){ return w === 'knife' || w === 'glock' || !!p.owned[w]; }   // guns are bought with cash (no level locks)
+function canUse(p, w){ return !!S.weapons[w]; }   // every gun is free (no level locks, no price); attachments are bought
 // $25 (S.prog.cash.level) for every level gained; returns the cash paid
 function levelCash(p, xpBefore){ const d = levelOf(p.xp) - levelOf(xpBefore); if (d > 0){ p.cash += d * S.prog.cash.level; return d * S.prog.cash.level; } return 0; }
 // one-time move of existing profiles to the cash economy: guns already reached by level stay owned, plus $25 per level
