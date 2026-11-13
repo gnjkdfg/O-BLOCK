@@ -44,6 +44,9 @@ function client(token){
     ok(bc && bc.profile.owned.cop && bc.profile.cash === 1000, 'buying the Cop costs $5,000 and is saved', bc && bc.profile);
     A.send({ t:'buy', item:'cop' }); const dup = await A.next('reject', m => m.what === 'buy');
     ok(dup && /already owned/.test(dup.why), 'cannot buy the same thing twice');
+    A.send({ t:'buy', item:'sniper' }); const bs = await A.next('profile', m => m.bought === 'sniper');
+    ok(bs && bs.profile.owned.sniper && bs.profile.cash === 500, 'guns are bought with cash (sniper $500), no level needed', bs && bs.profile);
+    B.send({ t:'buy', item:'att:scope25' }); const ba = await B.next('reject', m => m.what === 'buy'); ok(ba && /not enough cash/.test(ba.why), 'attachments cost cash too');
 
     console.log('rooms');
     A.send({ t:'loadout', char:'cop', weapon:'sniper' }); B.send({ t:'loadout', char:'cop', weapon:'ar15' });
@@ -60,7 +63,7 @@ function client(token){
     A.send({ t:'start' }); const st = await B.next('start');
     ok(!!st, 'host starts the match');
     const ea = st.ents.find(e => e.id === wa.id), eb = st.ents.find(e => e.id === wb.id);
-    ok(ea.w === 'sniper' && eb.w === 'glock', 'locked weapons are replaced (level 1 → Glock; level 20 keeps the sniper)', [ea.w, eb.w]);
+    ok(ea.w === 'sniper' && eb.w === 'glock', 'guns you do not own are replaced (no sniper → Glock; bought sniper is kept)', [ea.w, eb.w]);
     ok(st.ents.every(e => S.spawns.some(s => Math.hypot(s[0]-e.pos[0], s[1]-e.pos[2]) < 0.01)), 'everyone spawns on one of the 15 validated points');
 
     console.log('shots and damage (server-validated)');

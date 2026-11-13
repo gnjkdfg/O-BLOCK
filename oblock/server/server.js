@@ -34,9 +34,14 @@ const RESPAWN = 3.5, MAX_SPEED = 13;      // m/s (sprint 7.4 * nic 1.35 ≈ 10, 
 let profiles = {}; try { profiles = JSON.parse(fs.readFileSync(PROFILE_FILE, 'utf8')); } catch (e) {}
 let saveT = null; const saveProfiles = () => { clearTimeout(saveT); saveT = setTimeout(() => fs.writeFile(PROFILE_FILE, JSON.stringify(profiles), () => {}), 300); };
 const levelOf = xp => 1 + Math.floor(Math.max(0, xp) / S.prog.xpPerLevel);
-function profileOf(token){ return profiles[token] || (profiles[token] = { cash:0, xp:0, owned:{switch:false, jeff:false, cop:false}, paid:[] }); }
+function profileOf(token){ const p = profiles[token] || (profiles[token] = { cash:0, xp:0, owned:{switch:false, jeff:false, cop:false}, paid:[], v6:true }); migrateV6(p); return p; }
 function pubProfile(p){ return { cash:p.cash, xp:p.xp, level:levelOf(p.xp), owned:p.owned }; }
-function canUse(p, w){ return w === 'knife' || levelOf(p.xp) >= (S.prog.unlock[w] ?? 0); }
+function canUse(p, w){ return w === 'knife' || w === 'glock' || !!p.owned[w]; }   // guns are bought with cash (no level locks)
+// $25 (S.prog.cash.level) for every level gained; returns the cash paid
+function levelCash(p, xpBefore){ const d = levelOf(p.xp) - levelOf(xpBefore); if (d > 0){ p.cash += d * S.prog.cash.level; return d * S.prog.cash.level; } return 0; }
+// one-time move of existing profiles to the cash economy: guns already reached by level stay owned, plus $25 per level
+function migrateV6(p){ if (p.v6) return; const L = levelOf(p.xp), OLD = { drako:10, sniper:20, shotgun:50, ar15:100 };
+  p.owned = p.owned || {}; for (const w in OLD) if (L >= OLD[w]) p.owned[w] = true; p.cash += (L - 1) * S.prog.cash.level; p.v6 = true; }
 function ownsChar(p, c){ const price = (S.characters[c] || {}).price || 0; return !!S.characters[c] && (!price || !!p.owned[c]); }
 
 // ------------------------------------------------------------------ geometry: line of sight against the map colliders
@@ -107,7 +112,8 @@ function maxHp(e){ const A = S.abilities[e.char]; return (e.baseHp || 100) * (e.
 function dmgMul(e){ const A = S.abilities[e.char]; return A && A.dmgMul && e.ab.active > 0 ? A.dmgMul : 1; }
 
 function startMatch(room){
-  const st = room.settings, M = { id: crypto.randomUUID(), clock:0, ents:new Map(), ended:false, za:null, searched:new Set(), glass:new Set(), carHops:{}, kills:{} };
+  const st = room.settings, M = { id: crypto.randomUUID(), clock:0, ents:new Map(), ended:false, za:null, searched:new Set(), glass:new Set(), carHops:{}, kills:{},
+    rides:(S.rides || []).map(r => ({ id:r.id, kind:r.kind, x:r.x, y:0, z:r.z, yaw:r.yaw, lean:0, rider:null })) };
   for (const c of room.clients){
     const p = c.profile, char = ownsChar(p, c.char) && st.chars.includes(c.char) ? c.char : 'tracksuit';
     const usable = st.weapons.filter(w => canUseIn(room, p, w));
@@ -129,6 +135,13 @@ function spawnFor(room, e){
     const sc = minD + Math.random()*6; if (sc > bs){ bs = sc; best = s; } }
   return best;
 }
+// ---- rideable vehicles (scooters, e-bike). The server owns who is riding what, so two players can never take the same
+// one; the rider streams the vehicle's position with their own state and every client draws it from the snapshots.
+function releaseRide(room, e, at){
+  const M = room.match; if (!M || !e.ride) return; const r = M.rides.find(v => v.id === e.ride); e.ride = null; if (!r) return;
+  if (at && Math.hypot(at[0]-r.x, at[2]-r.z) < 4){ r.x = +at[0]; r.y = +at[1]; r.z = +at[2]; r.yaw = +at[3] || r.yaw; }
+  r.rider = null; r.lean = 0; broadcast(room, { t:'ride', id:r.id, rider:null, x:r.x, y:r.y, z:r.z, yaw:r.yaw });
+}
 function respawn(room, e){
   const s = spawnFor(room, e); e.pos = [s[0], 0, s[1]]; e.yaw = s[2] || 0; e.alive = true; e.bluntCap = false; e.beer = 0; e.ab.active = 0; e.ab.ready = false;
   e.hp = maxHp(e); e.mag = S.weapons[e.w].mag; e.res = S.weapons[e.w].reserve; e.reloadUntil = 0; e.lastSt = Date.now();
@@ -142,10 +155,10 @@ function damage(room, by, target, dmg, head, w){
   if (target.hp <= 0) kill(room, by, target, w, head);
 }
 function kill(room, by, target, w, head){
-  const M = room.match, st = room.settings; target.alive = false; target.deadT = 0; target.deaths++; target.ab.active = 0; target.ab.ready = false; target.streak = 0; target.nic = 0;
+  const M = room.match, st = room.settings; target.alive = false; target.deadT = 0; releaseRide(room, target); target.deaths++; target.ab.active = 0; target.ab.ready = false; target.streak = 0; target.nic = 0;
   if (by && by !== target){ by.kills++; by.streak++; if (st.nic && by.streak % S.perks.nic.at === 0 && by.nic < S.perks.nic.max) by.nic++;
     { const A = st.abilities && S.abilities[by.char]; if (A && !by.ab.active && !by.ab.ready && by.streak >= A.at){ by.ab.ready = true; broadcast(room, { t:'abready', id:by.id, name:A.name, streak:by.streak }); } }
-    if (by.kind === 'player'){ const p = by.owner.profile, kx = Math.round(S.prog.xp.kill * st.xpMul), kc = Math.round(S.prog.cash.kill * st.cashMul); p.xp += kx; p.cash += kc; M.kills[by.id] = (M.kills[by.id] || 0) + 1; saveProfiles(); send(by.owner, { t:'profile', profile:pubProfile(p), why:'KILL', xp:kx, cash:kc }); } }
+    if (by.kind === 'player'){ const p = by.owner.profile, kx = Math.round(S.prog.xp.kill * st.xpMul), kc = Math.round(S.prog.cash.kill * st.cashMul); const xb = p.xp; p.xp += kx; p.cash += kc; const lc = levelCash(p, xb); M.kills[by.id] = (M.kills[by.id] || 0) + 1; saveProfiles(); send(by.owner, { t:'profile', profile:pubProfile(p), why:lc ? 'LEVEL UP' : 'KILL', xp:kx, cash:kc + lc }); } }
   if (M.za && M.za.carrier === target.id){ M.za.carrier = null; M.za.x = target.pos[0]; M.za.y = Math.max(0, target.pos[1]); M.za.z = target.pos[2]; M.za.groundT = 0; }
   broadcast(room, { t:'kill', by:by ? by.id : null, target:target.id, w, head:!!head });
   if (st.mode === 'dm' && st.kills > 0 && by && by.kills >= st.kills) return endMatch(room, by.id);
@@ -172,7 +185,7 @@ function endMatch(room, winnerId){
     else if (place === 2){ cash += Cc(S.prog.cash.second); lines.push({ label:'2nd place', xp:0, cash:Cc(S.prog.cash.second) }); }
     else if (place === 3){ cash += Cc(S.prog.cash.third); lines.push({ label:'3rd place', xp:0, cash:Cc(S.prog.cash.third) }); }
     const k = M.kills[c.id] || 0, kx = Math.round(S.prog.xp.kill * XM), kc = Math.round(S.prog.cash.kill * CM); if (k) lines.unshift({ label:'Kills ×' + k, xp:k*kx, cash:k*kc, already:true });
-    p.xp += xp; p.cash += cash;
+    const xb = p.xp; p.xp += xp; p.cash += cash; const lc = levelCash(p, xb); if (lc){ lines.push({ label:'Level up', xp:0, cash:lc }); cash += lc; }
     send(c, { t:'end', winner:winnerId, rows:r, place, rewards:{ lines, xp, cash, totalXP:xp + k*kx, totalCash:cash + k*kc, level:levelOf(p.xp) }, profile:pubProfile(p) });
   }
   saveProfiles();
@@ -198,7 +211,8 @@ function tick(room){
   if (st.mode === 'dm' && st.time > 0 && M.clock >= st.time){ const r = rows(room); const tie = r.length > 1 && r[0].kills === r[1].kills && (st.tie !== 'deaths' || r[0].deaths === r[1].deaths); return endMatch(room, tie ? 'TIE' : r[0].id); }
   // snapshot: every entity, the bag, the clock
   broadcast(room, { t:'snap', clock:+M.clock.toFixed(2), ents:[...M.ents.values()].map(e => [e.id, +e.pos[0].toFixed(2), +e.pos[1].toFixed(2), +e.pos[2].toFixed(2), +e.yaw.toFixed(3), +e.pitch.toFixed(3), e.w, e.alive ? 1 : 0, Math.round(e.hp), e.kills, e.deaths, e.ab.active > 0 ? 1 : 0, e.flags || 0]),
-    za:M.za ? { carrier:M.za.carrier, x:M.za.x, y:M.za.y, z:M.za.z, hold:M.za.hold, atHome:M.za.atHome } : null });
+    za:M.za ? { carrier:M.za.carrier, x:M.za.x, y:M.za.y, z:M.za.z, hold:M.za.hold, atHome:M.za.atHome } : null,
+    rides:M.rides.map(r => [r.id, +r.x.toFixed(2), +r.y.toFixed(2), +r.z.toFixed(2), +r.yaw.toFixed(3), +r.lean.toFixed(3), r.rider]) });
 }
 
 // ------------------------------------------------------------------ shot validation (players and host bots)
@@ -252,7 +266,7 @@ wss.on('connection', ws => {
 function leave(ws){
   const room = ws.room; if (!room) return; ws.room = null;
   room.clients = room.clients.filter(c => c !== ws);
-  if (room.match && ws.ent){ room.match.ents.delete(ws.id); if (room.match.za && room.match.za.carrier === ws.id) room.match.za.carrier = null; broadcast(room, { t:'left', id:ws.id }); }
+  if (room.match && ws.ent){ releaseRide(room, ws.ent); room.match.ents.delete(ws.id); if (room.match.za && room.match.za.carrier === ws.id) room.match.za.carrier = null; broadcast(room, { t:'left', id:ws.id }); }
   if (!room.clients.length){ clearInterval(room.timer); rooms.delete(room.code); return; }
   if (room.host === ws){ room.host = room.clients[0]; if (room.match) for (const e of room.match.ents.values()) if (e.kind === 'bot'){ e.owner = room.host; } }
   broadcast(room, roomInfo(room));
@@ -301,7 +315,22 @@ function handle(ws, m){
       if (!M || !e || !e.alive || !Array.isArray(m.p)) return;
       const now = Date.now(), dt = Math.max(0.05, (now - e.lastSt) / 1000), d = Math.hypot(m.p[0]-e.pos[0], m.p[2]-e.pos[2]);
       if (d > MAX_SPEED * dt + 1.5 && !ALLOW_TELEPORT){ send(ws, { t:'correct', pos:e.pos }); return; }
-      e.pos = m.p.map(Number); e.yaw = +m.yaw || 0; e.pitch = +m.pitch || 0; e.flags = m.f | 0; e.lastSt = now; return;
+      e.pos = m.p.map(Number); e.yaw = +m.yaw || 0; e.pitch = +m.pitch || 0; e.flags = m.f | 0; e.lastSt = now;
+      // riding: the vehicle travels with its rider (it must stay under them)
+      if (e.ride && Array.isArray(m.v)){ const r = M.rides.find(v => v.id === e.ride);
+        if (r && Math.hypot(m.v[0]-e.pos[0], m.v[2]-e.pos[2]) < 1.5){ r.x = +m.v[0]; r.y = +m.v[1]; r.z = +m.v[2]; r.yaw = +m.v[3] || 0; r.lean = +m.v[4] || 0; } }
+      return;
+    }
+    case 'ride': {                               // get on / off a scooter or the e-bike
+      if (!M || !e || !e.alive) return; const r = M.rides.find(v => v.id === m.id);
+      if (!r) return send(ws, { t:'reject', what:'ride', id:m.id, why:'no such vehicle' });
+      if (m.on){
+        if (e.ride) return send(ws, { t:'reject', what:'ride', id:m.id, why:'already riding' });
+        if (r.rider) return send(ws, { t:'reject', what:'ride', id:m.id, why:'someone is already on it' });
+        if (Math.hypot(r.x - e.pos[0], r.z - e.pos[2]) > 2.6) return send(ws, { t:'reject', what:'ride', id:m.id, why:'too far away' });
+        r.rider = e.id; e.ride = r.id; return broadcast(room, { t:'ride', id:r.id, rider:e.id, x:r.x, y:r.y, z:r.z, yaw:r.yaw });
+      }
+      if (e.ride === r.id) releaseRide(room, e, Array.isArray(m.v) ? m.v : null); return;
     }
     case 'bots': {                               // host streams bot movement (bots only; never health)
       if (!M || room.host !== ws || !Array.isArray(m.list)) return;
@@ -374,7 +403,7 @@ function handle(ws, m){
     case 'dev': {                                // developer accounts only (DEV_TOKENS), every action logged
       if (!ws.dev) return send(ws, { t:'reject', what:'dev', why:'not a developer account' });
       const p = ws.profile, before = { cash:p.cash, xp:p.xp }, a = m.arg;
-      if (m.cmd === 'unlockAll'){ p.xp = Math.max(p.xp, (S.prog.unlock.ar15 - 1) * S.prog.xpPerLevel); p.owned = { switch:true, jeff:true, cop:true }; }
+      if (m.cmd === 'unlockAll'){ for (const k in S.prog.price) p.owned[k] = true; }
       else if (m.cmd === 'setLevel') p.xp = (Math.max(1, a | 0) - 1) * S.prog.xpPerLevel;
       else if (m.cmd === 'setXP') p.xp = Math.max(0, a | 0);
       else if (m.cmd === 'addCash') p.cash += Math.max(0, a | 0);
