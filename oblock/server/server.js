@@ -23,6 +23,13 @@ const PORT = +process.env.PORT || 8787;
 // Developer password: only ever in this process's environment (DEV_PASSWORD), never in the game files. Compared as
 // SHA-256 digests with a constant-time check; 3 wrong tries per connection, then an increasing wait.
 const DEV_PW_HASH = process.env.DEV_PASSWORD ? crypto.createHash('sha256').update(process.env.DEV_PASSWORD).digest() : null;
+// built-in fallback (same as the game): salted PBKDF2 fingerprint of the developer password, never the password itself
+const DEV_KEY = { salt:'ba20b3f8355b6ec41e6375b69e0b2c93', iter:150000, dk:'8647ed4f59b77937300e0580ce9da70f8d6eec19e33d87e7ed697112421a50d8' };
+function devPwOk(pw){
+  if (DEV_PW_HASH) return crypto.timingSafeEqual(crypto.createHash('sha256').update(pw).digest(), DEV_PW_HASH);
+  const got = crypto.pbkdf2Sync(pw, Buffer.from(DEV_KEY.salt, 'hex'), DEV_KEY.iter, 32, 'sha256');
+  return crypto.timingSafeEqual(got, Buffer.from(DEV_KEY.dk, 'hex'));
+}
 const DEV_TOKENS = new Set((process.env.DEV_TOKENS || '').split(',').map(s => s.trim()).filter(Boolean));
 const PROFILE_FILE = process.env.PROFILE_FILE || path.join(__dirname, 'profiles.json');
 const DEVLOG = path.join(__dirname, 'devlog.jsonl');
@@ -300,12 +307,12 @@ function handle(ws, m){
     case 'devauth': {
       if (!ws.profile) return;
       const now = Date.now(); if (now < (ws.devLockUntil || 0)) return send(ws, { t:'devauth', ok:false, why:'too many attempts · wait ' + Math.ceil((ws.devLockUntil - now) / 1000) + ' s' });
-      const pw = String(m.pw || '').slice(0, 128), got = crypto.createHash('sha256').update(pw).digest();
-      const ok = !!DEV_PW_HASH && crypto.timingSafeEqual(got, DEV_PW_HASH);
+      const pw = String(m.pw || '').slice(0, 128);
+      const ok = devPwOk(pw);
       fs.appendFile(DEVLOG, JSON.stringify({ t:new Date().toISOString(), token:ws.token.slice(0,6) + '…', cmd:'signin', ok }) + '\n', () => {});
       if (ok){ ws.dev = true; ws.devFails = 0; return send(ws, { t:'devauth', ok:true }); }
       ws.devFails = (ws.devFails || 0) + 1; if (ws.devFails >= 3) ws.devLockUntil = now + Math.min(60000, 5000 * 2 ** (ws.devFails - 3));
-      return send(ws, { t:'devauth', ok:false, why: DEV_PW_HASH ? 'incorrect password' : 'developer sign-in is not set up on this server' });
+      return send(ws, { t:'devauth', ok:false, why:'incorrect password' });
     }
     case 'tag': { ws.tag = m.dev ? 'DEV' : ''; if (room){ broadcast(room, roomInfo(room)); if (M) broadcast(room, { t:'tag', id:ws.id, dev:!!m.dev }, ws); } return; }
     case 'settings': { if (!room || room.host !== ws) return; if (M) return send(ws, { t:'reject', what:'settings', why:'locked while the match is running' });
