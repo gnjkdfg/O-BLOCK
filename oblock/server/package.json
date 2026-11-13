@@ -1,0 +1,15 @@
+{
+  "name": "oblock-server",
+  "version": "0.7.0",
+  "description": "O-Block private match server (server-authoritative)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "ws": "^8.22.2"
+  },
+  "private": true
+}

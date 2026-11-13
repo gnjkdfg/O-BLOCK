@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>O-Block</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Inter:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- ================= HUD ================= -->
+<div id="hud" style="display:none">
+  <div id="stamvig"></div>
+  <div id="cross" class="small"><i></i><i></i><i></i><i></i><b></b></div>
+  <div id="hitmark"><i></i><i></i><i></i><i></i></div>
+  <div id="scope"><div class="lens"></div><canvas width="1024" height="1024"></canvas><div id="thermlbl">THERMAL · WHITE HOT</div></div>
+  <div id="scope25"><canvas width="512" height="512"></canvas></div>
+  <div id="vignette"></div>
+  <div id="dmgdir"></div>
+  <div id="topleft"><div id="area"></div><div id="fps"></div><button id="camBtn" title="Switch camera">1ST PERSON</button></div>
+  <div id="prog"><div class="lv"><b id="pl-lvl">1</b><small>LEVEL</small></div><div class="xpb"><i id="pl-xp"></i></div><span id="pl-xpt"></span><span id="pl-cash">$0</span></div>
+  <div id="xpfeed"></div>
+  <div id="lvlup"></div>
+  <div id="topcenter">
+    <div id="matchbar"><span id="mtimer">00:00</span><span id="mtitle"></span></div>
+    <div id="objective"></div>
+    <div id="toasts"></div>
+  </div>
+  <div id="objmark"><i></i><span></span></div>
+  <canvas id="mini" width="212" height="212"></canvas>
+  <div id="killfeed"></div>
+  <div id="prompt"></div>
+  <div id="reload"><i></i><span>RELOADING</span></div>
+  <div id="bl">
+    <div id="status"></div>
+    <div id="health"><span id="hp-num">100</span>
+      <div class="bars"><div class="bar"><i id="hp-fill"></i></div><div class="bar st"><i id="st-fill"></i></div></div>
+      <small>HEALTH · STAMINA</small></div>
+  </div>
+  <div id="abil" style="display:none"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="19" class="trk"/><circle cx="22" cy="22" r="19" class="prg"/></svg><span class="ic"></span><span class="t"><b></b><small></small></span></div>
+  <div id="weapon"><div id="equip"></div><div id="slots"></div><div id="wname"></div><div id="ammo"></div></div>
+  <div id="scoreboard"><div class="sb"><div class="sb-title"></div><table><thead><tr><th>#</th><th>PLAYER</th><th>KILLS</th><th>DEATHS</th><th>STREAK</th><th>BEST</th><th>SCORE</th></tr></thead><tbody></tbody></table><p class="hint">Test bots are local practice opponents, not real players.</p></div></div>
+  <div id="flashfx"></div>
+  <div id="death"><h2>YOU WERE ELIMINATED</h2><p id="death-by"></p><p class="sm">Respawning…</p></div>
+</div>
+
+<!-- ================= SCREENS ================= -->
+<div class="screen" id="scr-loading"><div class="logo">O-BLOCK</div><p id="load-msg">Building the block…</p></div>
+
+<div class="screen" id="scr-main">
+  <div class="menu-left">
+    <div class="brand">
+      <svg class="crown" viewBox="0 0 64 40"><path d="M4 34 7 8l13 13L32 3l12 18L57 8l3 26z" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/><path d="M6 38h52" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
+      <svg class="logo" viewBox="0 0 520 150" role="img" aria-label="O-BLOCK">
+        <defs><filter id="brush" x="-5%" y="-10%" width="110%" height="125%"><feTurbulence type="fractalNoise" baseFrequency="0.035 0.9" numOctaves="2" seed="7" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="9" result="d"/><feTurbulence type="fractalNoise" baseFrequency="0.05 0.55" numOctaves="2" seed="3" result="g"/><feColorMatrix in="g" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 -3.2 2.45" result="mask"/><feComposite in="d" in2="mask" operator="in"/></filter>
+        <linearGradient id="chalk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#cfd2d6"/></linearGradient></defs>
+        <g filter="url(#brush)"><text x="260" y="112" text-anchor="middle" font-family="Oswald,Impact,'Arial Narrow',sans-serif" font-weight="700" font-size="128" font-style="italic" textLength="455" lengthAdjust="spacingAndGlyphs" fill="url(#chalk)" transform="skewX(-8) translate(16 0)">O-BLOCK</text>
+        <path d="M70 132 C 190 120, 330 118, 470 108 L 474 116 C 340 128, 200 132, 74 140 z" fill="#e9e9e9"/></g>
+      </svg>
+      <div class="tag">Street Shooter · Browser Edition</div>
+    </div>
+    <nav id="mainnav">
+      <button id="btn-play" class="mbtn m-play"><span class="sk"></span><span class="ic"><svg viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" fill="currentColor"/></svg></span><span class="tx"><b>PLAY</b><small>ENTER THE STREETS</small></span><span class="rules"></span></button>
+      <button id="btn-backpack" class="mbtn m-za"><span class="sk"></span><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg></span><span class="tx"><b>PLAY - THE FIGHT FOR ZA</b><small>MOST HOLD TIME WINS</small></span><svg class="art" viewBox="0 0 60 70"><defs><radialGradient id="bgl" cx="50%" cy="50%" r="60%"><stop offset="0" stop-color="#ff3b3b" stop-opacity=".55"/><stop offset="1" stop-color="#ff3b3b" stop-opacity="0"/></radialGradient></defs><ellipse cx="30" cy="38" rx="30" ry="32" fill="url(#bgl)"/><path d="M22 10c0-5 16-5 16 0v5h-3v-4c0-2-10-2-10 0v4h-3z" fill="#1a1a1c"/><rect x="13" y="14" width="34" height="46" rx="8" fill="#222327" stroke="#000" stroke-width="1.5"/><rect x="17" y="34" width="26" height="20" rx="4" fill="#2c2d32" stroke="#111"/><path d="M19 38h22" stroke="#7a1b1b" stroke-width="2"/><rect x="26" y="20" width="8" height="9" rx="2" fill="#a51e1e"/></svg></button>
+      <button id="btn-online" class="mbtn "><span class="sk"></span><span class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="7.5" r="3.2"/><path d="M5.5 19c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6z"/><circle cx="5" cy="9" r="2.3"/><path d="M0.8 17.5c0-2.6 1.8-4.4 4.2-4.4 1 0 1.8.3 2.5.8-1.3 1-2.2 2.3-2.5 3.6z"/><circle cx="19" cy="9" r="2.3"/><path d="M23.2 17.5c0-2.6-1.8-4.4-4.2-4.4-1 0-1.8.3-2.5.8 1.3 1 2.2 2.3 2.5 3.6z"/></svg></span><span class="tx"><b>PRIVATE MATCH</b><small>CREATE OR JOIN</small></span></button>
+      <button id="btn-char" class="mbtn "><span class="sk"></span><span class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8.5 3 3 6l2.2 4.3L7 9.5V21h10V9.5l1.8.8L21 6l-5.5-3c-.6 1.4-1.9 2.2-3.5 2.2S9.1 4.4 8.5 3z"/></svg></span><span class="tx"><b>CHARACTER</b><small>CUSTOMIZE YOUR LOOK</small></span></button>
+      <button id="btn-loadout" class="mbtn "><span class="sk"></span><span class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M2 5h20v4.5H2z"/><path d="M3.5 9.5h15.5v1.8H3.5z"/><path d="M4.2 11.3h5.6l1.5 8.7H5.6z"/><path d="M10.6 11.3h4.2v.9c0 1.9-1.5 2.9-3.5 2.9h-.4l-.2-1.3h.5c1.2 0 1.9-.6 1.9-1.5h-2.3z"/><rect x="18.5" y="3.6" width="1.6" height="1.6" rx=".4"/></svg></span><span class="tx"><b>LOADOUT</b><small>EDIT YOUR GEAR</small></span></button>
+      <button id="btn-settings" class="mbtn "><span class="sk"></span><span class="ic"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.3 2h3.4l.5 2.6c.7.2 1.3.5 1.9.9l2.3-1.4 2.4 2.4-1.4 2.3c.4.6.7 1.2.9 1.9l2.6.5v3.4l-2.6.5c-.2.7-.5 1.3-.9 1.9l1.4 2.3-2.4 2.4-2.3-1.4c-.6.4-1.2.7-1.9.9l-.5 2.6h-3.4l-.5-2.6c-.7-.2-1.3-.5-1.9-.9l-2.3 1.4-2.4-2.4 1.4-2.3c-.4-.6-.7-1.2-.9-1.9L2 13.7v-3.4l2.6-.5c.2-.7.5-1.3.9-1.9L4.1 5.6l2.4-2.4 2.3 1.4c.6-.4 1.2-.7 1.9-.9zM12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8z"/></svg></span><span class="tx"><b>SETTINGS</b><small>GAME PREFERENCES</small></span></button>
+      <button id="btn-full" class="mbtn m-full"><span class="sk"></span><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6"/></svg></span><span class="tx"><b>FULLSCREEN</b><small>FILL THE WHOLE SCREEN</small></span></button>
+    </nav>
+    <div id="mprof"></div>
+  </div>
+  <div id="brief" class="panel"></div>
+  <div id="pinfo"></div>
+  <button id="btn-guide" class="guidebtn">CONTROLS</button>
+  <div id="guide" class="panel"></div>
+</div>
+
+<div class="screen cols3" id="scr-char">
+  <div class="col left panel">
+    <h2>CHARACTER</h2>
+    <div id="char-list"></div>
+  </div>
+  <div class="col mid"><div id="char-views"><button data-v="front">FRONT</button><button data-v="side">SIDE</button><button data-v="back">BACK</button><button data-v="auto" class="on">AUTO-ROTATE</button></div><div class="hint floathint">Drag to rotate · auto-rotate resumes after 4 s</div></div>
+  <div class="col right panel">
+    <div id="char-info"></div>
+    <div id="char-opts"></div>
+    <div class="btns"><button id="char-back">BACK</button><button id="char-confirm" class="primary">CONFIRM SELECTION</button></div>
+    <p id="char-status" class="status"></p>
+  </div>
+</div>
+
+<div class="screen cols3" id="scr-loadout">
+  <div class="col left panel">
+    <h2>LOADOUT</h2>
+    <p class="hint">One firearm per loadout. The knife is always carried.</p>
+    <div id="lo-weapons"></div>
+    <div id="lo-equip"></div>
+  </div>
+  <div class="col mid">
+    <div id="lo-head"></div>
+    <div id="lo-views"></div>
+    <div id="lo-stats" class="panel"></div>
+  </div>
+  <div class="col right panel">
+    <div class="seg tabs" id="lo-tabs"><button data-t="att" class="on">ATTACHMENTS</button><button data-t="paint">PAINT</button></div>
+    <div id="lo-slots"></div>
+    <div id="lo-cards"></div>
+    <div id="lo-detail"></div>
+  </div>
+  <div id="lo-bar">
+    <button id="lo-back">BACK</button>
+    <button id="lo-reset">RESET ATTACHMENTS</button>
+    <button id="lo-clear">REMOVE ALL ATTACHMENTS</button>
+    <span id="lo-status" class="status"></span>
+    <button id="lo-save" class="primary">SAVE LOADOUT</button>
+  </div>
+</div>
+
+<div class="screen" id="scr-settings">
+  <div class="panel center wide2">
+    <h2>SETTINGS</h2>
+    <div id="set-tabs" class="seg tabs"></div>
+    <div id="set-body"></div>
+    <div class="btns"><button id="set-reset">RESET DEFAULTS</button><button id="set-back" class="primary">BACK</button></div>
+  </div>
+</div>
+
+<div class="screen" id="scr-pause">
+  <div class="panel center small">
+    <h2>PAUSED</h2>
+    <nav>
+      <button id="btn-resume" class="primary">RESUME</button>
+      <button id="btn-ploadout">CHANGE LOADOUT</button>
+      <button id="btn-pcam">CAMERA: 1ST PERSON</button>
+      <button id="btn-pfull">FULLSCREEN</button>
+      <button id="btn-psettings">SETTINGS</button>
+      <button id="btn-quit">RETURN TO MAIN MENU</button>
+    </nav>
+  </div>
+</div>
+
+<div class="screen" id="scr-online">
+  <div class="panel center wide2">
+    <h2>PRIVATE MATCH · ONLINE</h2>
+    <div id="on-body"></div>
+    <div class="btns"><button id="on-back">BACK</button></div>
+  </div>
+</div>
+
+<div class="screen" id="scr-qload">
+  <div class="panel center qload">
+    <h2>LOADOUT</h2>
+    <div id="ql-body"></div>
+    <div class="btns"><button id="ql-close">CLOSE</button><button id="ql-apply" class="primary">APPLY</button></div>
+  </div>
+</div>
+
+<div class="screen" id="scr-end">
+  <div class="panel center small">
+    <h2 id="end-title">VICTORY</h2>
+    <p id="end-sub" class="hint"></p>
+    <div id="end-info" class="endinfo"></div>
+    <div id="end-rewards"></div>
+    <table class="endt"><thead><tr><th>#</th><th>PLAYER</th><th>K</th><th>D</th><th>SCORE</th></tr></thead><tbody id="end-table"></tbody></table>
+    <div class="btns"><button id="end-menu">RETURN TO LOBBY</button><button id="end-again" class="primary">PLAY AGAIN</button></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/SkeletonUtils.js"></script>
+<script src="assets/glock.js"></script>
+<script src="assets/sniper.js"></script>
+<script src="assets/models.js"></script>
+<script src="assets/drako.js"></script>
+<script src="assets/jeff.js"></script>
+<script src="assets/nic.js"></script>
+<script src="assets/sfx.js"></script>
+<script src="assets/ar.js"></script>
+<script src="assets/sg.js"></script>
+<script src="assets/cop.js"></script>
+<script src="assets/scooter.js"></script>
+<script src="assets/ebike.js"></script>
+<script src="assets/outer.js"></script>
+<script src="js/core.js"></script>
+<script>/* developer tools: only a local, unpublished js/dev.local.js can enable them */(function(){ if (!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return; var s=document.createElement("script"); s.src="js/dev.local.js"; s.async=false; s.onerror=function(){}; document.head.appendChild(s); })();</script>
+<script src="js/map.js"></script>
+<script src="js/physics.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/environment.js"></script>
+<script src="js/character.js"></script>
+<script src="js/fparms.js"></script>
+<script src="js/weapons.js"></script>
+<script src="js/viewmodel.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/fx2.js"></script>
+<script src="js/modes.js"></script>
+<script src="js/botai.js"></script>
+<script src="js/streaks.js"></script>
+<script src="js/progression.js"></script>
+<script src="js/items.js"></script>
+<script src="js/vehicles.js"></script>
+<script src="js/nightgear.js"></script>
+<script src="js/net.js"></script>
+<script src="js/player.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
