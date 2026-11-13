@@ -17,7 +17,7 @@ const Flashlight = {
     // Low / Performance Mode: the player's light is only created the first time it is switched on, so players who never use it
     // pay nothing for it; Medium / High create it up front so the first toggle never hitches
     this.target=new THREE.Object3D(); scene.add(this.target);
-    if (Settings.quality!=='low' && !Settings.perf) this.makeSpot();
+    if (Settings.quality!=='low' && Settings.quality!=='potato' && !Settings.perf && !Settings.superPerf) this.makeSpot();
     this.beamGeo=new THREE.CylinderGeometry(0.02, 1.1, 7, 14, 1, true); this.beamGeo.translate(0,-3.5,0); this.beamGeo.rotateX(-PI/2);   // cone along -Z from its tip
     this.beamMat=new THREE.MeshBasicMaterial({color:'#fff2d0', transparent:true, opacity:0.06, blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide, fog:true});
     this.playerBeam=this.makeBeam(scene);
@@ -28,7 +28,7 @@ const Flashlight = {
   makeBeam(scene){ const m=new THREE.Mesh(this.beamGeo, this.beamMat); m.visible=false; m.frustumCulled=false; scene.add(m); return m; },
   // Medium/High: pooled bot lights; Low / Performance Mode: none (created once per quality change)
   applyQuality(scene){
-    const want = (Settings.quality!=='low' && !Settings.perf) ? FLASH_CFG.botLights : 0;
+    const want = (Settings.quality!=='low' && Settings.quality!=='potato' && !Settings.perf && !Settings.superPerf) ? FLASH_CFG.botLights : 0;
     while (this.botSpots.length>want){ const s=this.botSpots.pop(); scene.remove(s, s.target); }
     while (this.botSpots.length<want){ const C=FLASH_CFG.bot, s=new THREE.SpotLight('#fff0d6', 0, C.distance, C.angle, C.penumbra, 1.6); s.castShadow=false; s.target=new THREE.Object3D(); scene.add(s, s.target); this.botSpots.push(s); }
   },

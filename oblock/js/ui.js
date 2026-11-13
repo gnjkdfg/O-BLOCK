@@ -481,9 +481,21 @@ const UI = {
       const v=el('output','',fmt(Settings[key])); i.oninput=()=>{ Settings[key]=+i.value; v.textContent=fmt(+i.value); apply&&apply(+i.value); saveSettings(); };
       w.append(i,v); r.appendChild(w); box.appendChild(r); };
     if (this.setTab==='video'){
-      seg('Graphics quality','quality',[['low','Low'],['med','Medium'],['high','High']],()=>Game.applyGfx());
-      seg('Performance Mode','perf',[[false,'Off'],[true,'On']],()=>Game.applyGfx());
-      box.appendChild(el('p','hint','Performance Mode lowers render resolution, shortens draw distance, disables shadows, motion blur and light flashes, and animates distant bots less often.'));
+      const g=()=>{ Game.applyGfx(); this.buildSettings(); };
+      seg('Super Performance Mode','superPerf',[[false,'Off'],[true,'On']],g);
+      box.appendChild(el('p','hint','For very slow computers. Uses the lightest version of everything: low resolution with auto adjustment, short view distance, simple lighting, no shadows, sky, blur or light flashes, minimal effects, and distant players animate less often. Overrides the options below while it is on.'));
+      const sp=Settings.superPerf, sub=(...a)=>{ seg(...a); if (sp) box.lastChild.classList.add('dim'); };
+      sub('Graphics quality','quality',[['potato','Potato'],['low','Low'],['med','Medium'],['high','High']],g);
+      sub('Performance Mode','perf',[[false,'Off'],[true,'On']],g);
+      box.appendChild(el('p','hint','Potato is the lowest preset (half resolution, short view, reduced effects). Performance Mode lowers resolution, shortens draw distance, disables shadows, motion blur and light flashes, and animates distant bots less often.'));
+      sub('Render resolution','renderScale',[[0,'Preset'],[1,'100%'],[0.75,'75%'],[0.6,'60%'],[0.5,'50%'],[0.4,'40%'],[0.3,'30%']],g);
+      sub('Auto resolution','dynRes',[[false,'Off'],[true,'On']],g);
+      box.appendChild(el('p','hint','Auto resolution lowers the resolution when the frame rate drops and raises it again when there is room (never above the resolution chosen above).'));
+      sub('View distance','viewDist',[['auto','Preset'],['far','Far'],['normal','Normal'],['short','Short'],['tiny','Very short']],g);
+      sub('Lighting','simpleMat',[[false,'Realistic'],[true,'Simple (fast)']],g);
+      sub('Light flashes','dynLights',[[true,'On'],[false,'Off']],g);
+      sub('Effects','fxLevel',[['full','Full'],['reduced','Reduced'],['minimal','Minimal']],g);
+      box.appendChild(el('p','hint','Effects: shell casings, bullet holes, dust and gun smoke, glass shards and how long bodies stay.'));
       seg('FPS limit','fpsCap',[[15,'15'],[30,'30'],[60,'60'],[120,'120'],[240,'240'],[0,'Unlimited']]);
       seg('Motion blur','blur',[['off','Off'],['subtle','Subtle']]);
       slider('Camera bobbing','bob',0,100,1,v=>v===0?'Off':v+'%');
@@ -672,7 +684,7 @@ const UI = {
     const pr=$('#prompt'); if (pr._t!==t){ pr._t=t; pr.innerHTML=t; pr.style.display=t?'block':'none'; }
     $('#fps').style.display = Settings.showFps ? 'block' : 'none';
     $('#mini').style.display = Settings.minimap ? 'block' : 'none'; $('#killfeed').style.top = Settings.minimap ? '' : '12px';
-    if (Settings.minimap) drawMinimap();
+    if (Settings.minimap){ this.mmT=(this.mmT||0)+dt; if (!Perf.potato || this.mmT>0.1){ this.mmT=0; drawMinimap(); } }   // potato: minimap at 10 Hz
   },
   // end-of-match rewards (computed and paid once by ProfileAuthority / the server)
   showRewards(r, place){

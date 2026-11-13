@@ -98,8 +98,8 @@ const Env = {
     const showDrops = this.raining;
     this.rain.visible = showDrops;
     if (!showDrops) return;
-    const q={low:500,med:900,high:1400}[Settings.quality]||600;
-    const n=Math.floor(q*(Settings.rainFx==='reduced'?0.4:1)*Math.min(1,this.wet*1.5+0.2));
+    const q={potato:160,low:500,med:900,high:1400}[Settings.quality]||600;
+    const n=Math.floor(q*(Settings.rainFx==='reduced'?0.4:1)*(Settings.superPerf?0.3:1)*Math.min(1,this.wet*1.5+0.2));
     const p=this.rain.geometry.attributes.position.array, cx=cam.position.x, cy=cam.position.y, cz=cam.position.z;
     for (let k=0;k<n;k++){
       const d=this.drops[k]; d.y-=d.v*dt; if (d.y<-2){ d.y=rr(16,22); d.x=rr(-22,22); d.z=rr(-22,22); }

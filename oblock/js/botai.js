@@ -397,7 +397,7 @@ class Bot {
   // ------------------------------------------------ per-frame update
   update(dt){
     if (!this.alive){ this.deadT+=dt; if (this.deadT>BOT_TUNE.respawnDelay && !Mode.ended && !Net.inMatch) this.respawn(); return; }   // online: the server respawns bots
-    const camD=this.pos.distanceTo(camera.position), far=camD>BOT_TUNE.farDist;
+    const camD=this.pos.distanceTo(camera.position), far=camD>(Settings.superPerf?22:Settings.perf||Settings.quality==='potato'?35:BOT_TUNE.farDist);
     this.blindT=Math.max(0,this.blindT-dt); this.stateT+=dt; this.reactT=Math.max(0,this.reactT-dt); this.swingT=Math.max(0,this.swingT-dt); this.noCrouchT=Math.max(0,(this.noCrouchT||0)-dt);
     this.bloom=Math.max(0,this.bloom-dt*1.8); this.kick=damp(this.kick,0,12,dt);
     this.aimErr.multiplyScalar(Math.exp(-this.D.aimSettle*dt*0.35));                  // aim settles on a held target
@@ -471,7 +471,7 @@ class Bot {
     const pitch = tp ? Math.atan2(tp.y-e.y, Math.hypot(tp.x-e.x,tp.z-e.z)) : -0.15;
     this.label.s.visible = camD<40;
     this.animAcc=(this.animAcc||0)+dt;
-    if (!far || this.animAcc>0.1){
+    if (!far || this.animAcc>1/Perf.botAnimHz()){
       const md=this.moveDir||0;
       animateCharacter(rg,{speed:this.speed, moveX:-Math.sin(md), moveZ:-Math.cos(md), sprint, crouch:this.crouch, ads, pitch,
         hold:{weapon:this.heldWeapon(), kick:this.kick, firing:firing||ads, lowReady:this.speed>3.2 && !firing, reloadK:this.reloadT>0?1-this.reloadT/(this.def.reloadTime||2.4):0, swing:this.swingT>0?1-this.swingT/0.55:0}}, this.animAcc);

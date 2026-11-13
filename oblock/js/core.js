@@ -19,12 +19,19 @@ const Store = {
 // Weaker devices (most Chromebooks) default to Low.
 const weakDevice = (navigator.hardwareConcurrency||4) <= 4 || (navigator.deviceMemory||4) <= 4;
 const DEFAULT_SETTINGS = {
-  quality: weakDevice ? 'low' : 'med',
+  quality: (navigator.hardwareConcurrency||4) <= 2 ? 'potato' : weakDevice ? 'low' : 'med',
   rainFx: 'full',        // 'full' | 'reduced'
   camMode: 'first',      // 'first' | 'third'
   sens: 1.0,             // mouse sensitivity multiplier
   master: 80, sfx: 100, camMotion: 100, music: 35, guns: 95, hits: 90, steps: 80, breath: 80, ambience: 45, vehicles: 80, env: 85, ui: 70, uiHover: true,
   perf: false,           // Performance Mode
+  superPerf: false,      // Super Performance Mode: the lightest possible settings for very weak computers (overrides the options below)
+  renderScale: 0,        // 0 = from the graphics preset; else a fixed resolution 0.25..1
+  dynRes: weakDevice,    // Auto resolution: lowers/raises the render resolution to keep the frame rate up
+  simpleMat: false,      // Simple lighting: cheap Lambert shading instead of the realistic (PBR) shading
+  viewDist: 'auto',      // 'auto' (from the preset) | 'far' | 'normal' | 'short' | 'tiny'
+  fxLevel: 'full',       // effects: 'full' | 'reduced' | 'minimal' (casings, bullet holes, dust, glass shards, bodies)
+  dynLights: true,       // muzzle-flash / explosion lights
   fpsCap: 0,             // 0 = unlimited; else 15/30/60/120/240
   leanMode: 'hold',      // 'hold' | 'toggle'
   crouchMode: 'hold',    // 'hold' (hold the key) | 'toggle' (press once to crouch, again to stand)
@@ -41,6 +48,18 @@ const Settings = Object.assign({}, DEFAULT_SETTINGS, Store.get('settings', {}));
 if (Settings.blur==='auto') Settings.blur='off';
 if (!['none','cross','dotS','dotM','dotL'].includes(Settings.crosshair)) Settings.crosshair='cross';   // old small/medium cross -> Cross   // old default smeared the screen
 Settings.fov = clamp(Math.round(+Settings.fov||90), 60, 120);
+if (!['potato','low','med','high'].includes(Settings.quality)) Settings.quality='low';
+/* Performance helpers: one place that turns the settings into what each system should do.
+   Super Performance Mode wins over everything; otherwise each option is used as chosen. */
+const Perf = {
+  get sup(){ return !!Settings.superPerf; },
+  get potato(){ return Settings.superPerf || Settings.quality==='potato'; },
+  fx(){ return Settings.superPerf ? 'minimal' : Settings.quality==='potato' && Settings.fxLevel==='full' ? 'reduced' : (Settings.fxLevel||'full'); },
+  simple(){ return Settings.superPerf || !!Settings.simpleMat; },
+  lights(){ return !Settings.superPerf && Settings.dynLights!==false; },
+  botAnimHz(){ return Settings.superPerf ? 6 : Settings.perf||Settings.quality==='potato' ? 8 : 10; },   // far characters
+  label(){ return Settings.superPerf ? 'SUPER PERF' : (Settings.quality||'low').toUpperCase()+(Settings.perf?' · PERF':''); },
+};
 function saveSettings(){ Store.set('settings', Settings); }
 
 // One firearm per loadout (+ knife for everyone) and a limited equipment budget.

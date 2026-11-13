@@ -582,7 +582,8 @@ const Corpses = {
   update(dt){
     for (let i=this.live.length-1;i>=0;i--){
       const c=this.live[i]; c.t+=dt;
-      if (c.t>=10){ c.rig.root.visible=false; c.rig.rag=null; this.pool.push(c.rig); this.live.splice(i,1); continue; }
+      const fx=Perf.fx(), life=fx==='minimal'?3.5:fx==='reduced'?6:10, maxN=fx==='minimal'?2:fx==='reduced'?4:99;
+      if (c.t>=life || this.live.length-i>maxN){ c.rig.root.visible=false; c.rig.rag=null; this.pool.push(c.rig); this.live.splice(i,1); continue; }
       Ragdoll.step(c.rig, dt);
     }
   },

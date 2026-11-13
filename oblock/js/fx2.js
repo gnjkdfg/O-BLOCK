@@ -79,6 +79,7 @@ const Casings = {
   // world-space port position, gun orientation (barrel = -Z), ground height under the shooter
   eject(id, pos, quat, ground, remote){
     if (!CASING_TUNE.size[id]) return;
+    const fx=Perf.fx(); if (fx==='minimal' || (fx==='reduced' && remote)) return;   // effects setting: fewer flying casings
     const C=this.list[this.i++%this.list.length], [r,l]=CASING_TUNE.size[id];
     C.m.material.color.set(CASING_TUNE.color[id]||'#c9a24a');
     C.m.scale.set(r,r,l); C.m.position.copy(pos); C.m.quaternion.copy(quat); C.m.visible=true; C.m.material.opacity=1;

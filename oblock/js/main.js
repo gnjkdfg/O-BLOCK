@@ -16,11 +16,63 @@ Object.assign(sun.shadow.camera,{left:-40,right:40,top:40,bottom:-40,near:1,far:
 sun.shadow.bias=-0.0008; scene.add(sun); scene.add(sun.target);
 
 const GFX = {
+  potato:{scale:0.5, far:110, fogNear:20, fogFar:100, shadows:false, sky:false},
   low:  {scale:0.7, far:150, fogNear:30, fogFar:135, shadows:false, sky:false},
   med:  {scale:1.0, far:260, fogNear:55, fogFar:230, shadows:false, sky:true},
   high: {scale:Math.min(devicePixelRatio||1,1.5), far:320, fogNear:80, fogFar:300, shadows:true, sky:true},
 };
 let mapInfo=null, skyGroup=null, groundPhong=null;
+
+/* Simple lighting: swaps the realistic (Standard/Physical/Phong) materials for cheap per-vertex Lambert ones.
+   The Lambert copy forwards colour, opacity, textures, skinning etc. to the original material, so any code that
+   changes the original (team colours, fading, damage flashes) still shows up. Turning it off puts the originals back. */
+const SimpleMat = {
+  on:false, cache:new Map(), t:0,
+  FWD:['color','opacity','transparent','map','alphaMap','alphaTest','emissive','emissiveMap','emissiveIntensity','visible','side','depthWrite','depthTest',
+       'skinning','morphTargets','morphNormals','vertexColors','fog','polygonOffset','polygonOffsetFactor','polygonOffsetUnits','blending','colorWrite','toneMapped','wireframe','aoMap','aoMapIntensity','lightMap','lightMapIntensity'],
+  ok(m){ return m && (m.isMeshStandardMaterial||m.isMeshPhongMaterial) && !m.userData.noSimple && m.onBeforeCompile===THREE.Material.prototype.onBeforeCompile; },
+  lambert(m){
+    let l=this.cache.get(m); if (l) return l;
+    l=new THREE.MeshLambertMaterial(); l.name=m.name; l.userData.simpleOf=m;
+    for (const k of this.FWD){ if (!(k in m)) continue; Object.defineProperty(l,k,{get(){ return m[k]; }, set(v){ m[k]=v; }, configurable:true}); }
+    const self=this; l.clone=function(){ return self.lambert(m.clone()); };   // a clone stays linked to a (cloned) original
+    this.cache.set(m,l); return l;
+  },
+  swap(o, on){
+    if (!o.material || !(o.isMesh||o.isSkinnedMesh)) return;
+    if (on){
+      if (Array.isArray(o.material)){ if (o.material.some(m=>this.ok(m))){ o.userData.simpleOrig=o.material; o.material=o.material.map(m=>this.ok(m)?this.lambert(m):m); } }
+      else if (this.ok(o.material)){ o.userData.simpleOrig=o.material; o.material=this.lambert(o.material); }
+    } else if (o.userData.simpleOrig){
+      // the game may have assigned a new material since; only restore our own copies
+      const cur=o.material; delete o.userData.simpleOrig;
+      if (Array.isArray(cur)) o.material=cur.map(m=>m.userData&&m.userData.simpleOf ? m.userData.simpleOf : m);
+      else if (cur.userData && cur.userData.simpleOf) o.material=cur.userData.simpleOf;
+    }
+  },
+  pass(on){ for (const sc of [scene, VM.scene]) sc && sc.traverse(o=>this.swap(o,on)); },
+  apply(on){ if (on===this.on){ if (on) this.pass(true); return; } this.on=on; this.pass(on); },
+  // new objects (corpses, pickups, rebuilt weapons) are picked up every couple of seconds
+  update(dt){ if (!this.on) return; this.t+=dt; if (this.t>2){ this.t=0; this.pass(true); } },
+};
+
+/* Auto resolution: measures the frame rate every second and nudges the render resolution down (fast) or up (slow)
+   so the game stays playable on weak computers. Never goes above the chosen resolution. */
+const DynRes = {
+  base:1, k:1, acc:0, n:0, good:0,
+  scale(){ return Math.max(Math.min(this.base,0.3), this.base*(Settings.dynRes||Settings.superPerf ? this.k : 1)); },   // never below 30% (or the chosen value if lower)
+  target(){ const c=Settings.fpsCap|0; return c>0 ? Math.min(c,60)*0.9 : 50; },
+  update(rdt){
+    if (!(Settings.dynRes||Settings.superPerf) || Game.state!=='playing'){ this.acc=0; this.n=0; return; }
+    this.acc+=rdt; this.n++; if (this.acc<1) return;
+    const fps=this.n/this.acc, t=this.target(); this.acc=0; this.n=0;
+    let k=this.k;
+    if (fps<t*0.85){ k=Math.max(0.6, k-(fps<t*0.6?0.15:0.08)); this.good=0; }
+    else if (fps>=t*0.98){ if (++this.good>=3){ k=Math.min(1, k+0.05); this.good=0; } }
+    else this.good=0;
+    if (Math.abs(k-this.k)>0.001){ this.k=k; renderer.setPixelRatio(this.scale()); renderer.setSize(innerWidth,innerHeight,false); }
+  },
+};
 
 /* ---------- Motion blur (lightweight): blends the previous frame in only while the view
    is turning quickly, and backs off while shooting. Costs two full-screen passes. */
@@ -34,7 +86,7 @@ const Post = {
     this.copy=new THREE.MeshBasicMaterial({map:null, depthTest:false, depthWrite:false});
     this.quad=new THREE.Mesh(new THREE.PlaneGeometry(2,2), this.mat); this.scene.add(this.quad);
   },
-  enabled(){ return Settings.blur==='subtle' && !Settings.perf; },
+  enabled(){ return Settings.blur==='subtle' && !Settings.perf && !Settings.superPerf; },
   ensure(){
     const s=renderer.getDrawingBufferSize(new THREE.Vector2()); if (s.x===this.w && s.y===this.h && this.rtS) return;
     this.w=s.x; this.h=s.y; for (const r of [this.rtS,this.rtA,this.rtB]) if (r) r.dispose();
@@ -114,27 +166,66 @@ const Game = {
   refreshWeapons(){ VM.refreshWeapons(); PlayerChar.refreshWeapons(); Menu.refresh();
     for (const id of FIREARMS){ const a=Arsenal.ammo[id]; if (a) a.mag=Math.min(a.mag, weaponDef(id).mag); }
     Arsenal.refreshDef(); },
-  applyGfx(){
+  // graphics: preset -> Performance Mode -> view distance -> render resolution -> Super Performance Mode (wins) -> auto resolution
+  gfxCfg(){
     const s=Object.assign({}, GFX[Settings.quality]||GFX.low);
     if (Settings.perf){ s.scale=Math.min(s.scale,0.6); s.far=Math.min(s.far,130); s.fogNear=25; s.fogFar=Math.min(s.fogFar,125); s.shadows=false; s.sky=false; }
-    renderer.setPixelRatio(s.scale); renderer.setSize(innerWidth,innerHeight,false);
+    const VD={far:[320,80,300], normal:[200,45,185], short:[120,22,110], tiny:[75,12,70]}[Settings.viewDist];
+    if (VD){ [s.far,s.fogNear,s.fogFar]=VD; }
+    if (Settings.renderScale>0) s.scale=Settings.renderScale;
+    if (Settings.superPerf){ s.scale=Math.min(s.scale,0.45); s.far=Math.min(s.far,85); s.fogNear=Math.min(s.fogNear,14); s.fogFar=Math.min(s.fogFar,80); s.shadows=false; s.sky=false; }
+    return s;
+  },
+  applyGfx(){
+    const s=this.gfxCfg(); DynRes.base=s.scale;
+    renderer.setPixelRatio(DynRes.scale()); renderer.setSize(innerWidth,innerHeight,false);
     camera.far=s.far; camera.updateProjectionMatrix(); scene.fog.near=s.fogNear; scene.fog.far=s.fogFar;
     if (renderer.shadowMap.enabled!==s.shadows){ renderer.shadowMap.enabled=s.shadows; sun.castShadow=s.shadows; scene.traverse(o=>{ if (o.material) [].concat(o.material).forEach(m=>m.needsUpdate=true); }); }
     if (skyGroup) skyGroup.visible=s.sky;
     if (Flashlight.target) Flashlight.applyQuality(scene);
+    // dynamic lights: hidden lights drop out of every shader (cheaper per pixel); toggled only here, so no recompiles mid-fight
+    const L=Perf.lights(); if (FX.light) FX.light.visible=L; if (MuzzleFlash.light.vm) MuzzleFlash.light.vm.visible=L;
+    SimpleMat.apply(Perf.simple());
+    document.body.classList.toggle('superperf', !!Settings.superPerf);
   },
 };
 
 // ---------- Pointer lock & input (all actions go through Binds) ----------
-let dragLook=false, mouseDown=false, lockGrace=0;
+/* Mouse capture. Chromebooks often refuse or drop the pointer lock while the screen switches in/out of fullscreen,
+   and the first mouse events after a switch can carry huge bogus jumps. So:
+   - a failed lock never leaves the mouse stuck in "hold-to-look" mode: the next click simply asks again
+     (hold-to-look is only a last resort when the browser has no pointer lock at all, or refused it 3 times in a row);
+   - while the lock is missing a "CLICK TO AIM" hint shows instead of the game pausing out from under you;
+   - mouse movement is ignored for a moment after any lock / fullscreen / resize change, and impossible jumps are dropped;
+   - raw (unaccelerated) mouse movement is used where the browser supports it (ChromeOS, Windows). */
+let dragLook=false, mouseDown=false, lockGrace=0, lockFails=0, lockPending=false, lookMuteUntil=0, rawMouse=true;
+const lockHint=document.createElement('div'); lockHint.id='lockhint'; lockHint.textContent='CLICK TO AIM'; document.body.appendChild(lockHint);
+function showLockHint(){ lockHint.classList.toggle('on', Game.state==='playing' && document.pointerLockElement!==canvas && !dragLook); }
+function muteLook(ms){ lookMuteUntil=Math.max(lookMuteUntil, performance.now()+ms); }
 function requestLock(){
-  lockGrace=performance.now()+400;   // ignore a stale 'unlocked' event from leaving the previous match
-  try { const r=canvas.requestPointerLock(); if (r && r.catch) r.catch(()=>{ dragLook=true; }); } catch(e){ dragLook=true; }
-  setTimeout(()=>{ if (Game.state==='playing' && document.pointerLockElement!==canvas) dragLook=true; }, 600);
+  lockGrace=performance.now()+800;   // ignore a stale 'unlocked' event from leaving the previous match / a fullscreen switch
+  if (!canvas.requestPointerLock){ dragLook=true; return; }
+  if (document.pointerLockElement===canvas || lockPending) return;
+  lockPending=true; muteLook(150);
+  const fail=()=>{ lockPending=false; if (document.pointerLockElement===canvas) return; if (++lockFails>=3) dragLook=true; showLockHint(); };
+  const plain=()=>{ try { const r=canvas.requestPointerLock(); if (r && r.then) r.then(()=>{ lockPending=false; }, fail); else setTimeout(()=>{ lockPending=false; showLockHint(); },700); } catch(e){ fail(); } };
+  try {
+    const r = rawMouse ? canvas.requestPointerLock({unadjustedMovement:true}) : canvas.requestPointerLock();
+    if (r && r.then) r.then(()=>{ lockPending=false; }, err=>{ if (rawMouse && err && err.name==='NotSupportedError'){ rawMouse=false; plain(); } else fail(); });
+    else setTimeout(()=>{ lockPending=false; showLockHint(); },700);   // older browsers: no promise
+  } catch(e){ rawMouse=false; plain(); }
 }
 document.addEventListener('pointerlockchange',()=>{
-  if (document.pointerLockElement===canvas) dragLook=false;
+  muteLook(120);
+  if (document.pointerLockElement===canvas){ dragLook=false; lockFails=0; lockPending=false; }
   else if (Game.state==='playing' && !dragLook && performance.now()>lockGrace) Game.pause();
+  showLockHint();
+});
+document.addEventListener('pointerlockerror',()=>{ lockPending=false; if (++lockFails>=3) dragLook=true; showLockHint(); });
+for (const ev of ['fullscreenchange','webkitfullscreenchange']) document.addEventListener(ev,()=>{
+  lockGrace=performance.now()+1200; muteLook(250);   // the switch itself may drop the lock: show the hint instead of pausing
+  mouseDown=false; for (const k in Input.down) if (k.startsWith('Mouse')){ Input.down[k]=false; actionsFor(k).forEach(releaseAction); }
+  setTimeout(()=>{ onResize(); showLockHint(); }, 60);
 });
 function actionsFor(code){ return ACTIONS.filter(a=>Binds[a[0]]===code).map(a=>a[0]); }
 function pressAction(a){
@@ -178,7 +269,7 @@ const locked = () => document.pointerLockElement===canvas || dragLook;
 canvas.addEventListener('mousedown',e=>{
   mouseDown=true;
   if (Game.state!=='playing') return;
-  if (document.pointerLockElement!==canvas && !dragLook){ requestLock(); return; }
+  if (document.pointerLockElement!==canvas){ requestLock(); if (!dragLook) return; }   // every click retries the lock
   const code='Mouse'+e.button; Input.down[code]=true; actionsFor(code).forEach(pressAction);
 });
 addEventListener('mouseup',e=>{ mouseDown=false; const code='Mouse'+e.button; Input.down[code]=false; actionsFor(code).forEach(releaseAction); });
@@ -187,6 +278,8 @@ addEventListener('wheel',e=>{ if (Game.state==='playing' && locked() && P.alive)
 addEventListener('mousemove',e=>{
   if (Game.state!=='playing') return;
   if (document.pointerLockElement!==canvas && !(dragLook && mouseDown)) return;
+  if (performance.now()<lookMuteUntil) return;                                        // just after a lock / fullscreen change
+  if (Math.abs(e.movementX)>400 || Math.abs(e.movementY)>400) return;                 // bogus jump (Chrome/ChromeOS bug)
   // sensitivity scales with the zoom (FOV narrows by the same factor), so the view moves at the same angular rate on screen
   const k=0.0022*Settings.sens*lerp(1, Arsenal.def.adsZoom||1, Arsenal.adsK);
   P.yaw -= e.movementX*k; P.pitch = clamp(P.pitch - e.movementY*k, -1.5, 1.5);
@@ -203,7 +296,8 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>{ Input.down[e.code]=false; actionsFor(e.code).forEach(releaseAction); });
 addEventListener('blur',()=>{ for (const k in Input.down) Input.down[k]=false; Arsenal.trigger=false; UI.tabHeld=false; UI.scoreboard&&UI.scoreboard(false); });
-addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); VM.cam.aspect=camera.aspect; VM.cam.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight,false); });
+function onResize(){ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); VM.cam.aspect=camera.aspect; VM.cam.updateProjectionMatrix(); renderer.setPixelRatio(DynRes.scale()); renderer.setSize(innerWidth,innerHeight,false); muteLook(120); }
+addEventListener('resize',onResize);
 
 // Footsteps: emitted by the character animation at each foot contact (see PlayerChar.rig.onStep)
 function footsteps(dt){}
@@ -255,7 +349,7 @@ function loop(now){
   if (cap>0 && now-last < 1000/cap - 1.5) return;      // FPS limiter
   const dt=Math.min(0.05,(now-last)/1000), rdt=Math.min(0.25,Math.max(0,(now-last)/1000)); last=now;   // rdt: real time, for timers that must be exact on slow frames
   const st=Game.state, inGame = st==='playing' || st==='pause' || st==='end' || st==='qload' || (st==='settings' && UI.settingsReturn==='pause');
-  Ambience.update(dt, !inGame); Snd.updateListener(); if (inGame) Snd.updateSpace(dt);
+  Ambience.update(dt, !inGame); Snd.updateListener(); DynRes.update(rdt); SimpleMat.update(rdt); showLockHint(); if (inGame) Snd.updateSpace(dt);
   // the Armory / character screens always render their own isolated preview scene (never the game world), even when opened from a match
   if (inGame){
     if (Menu.on) Menu.hide();
@@ -291,7 +385,7 @@ function loop(now){
     renderer.setRenderTarget(null); renderer.clear();
     renderer.render(scene,camera);
   }
-  fpsAcc+=dt; fpsN++; if (fpsAcc>0.5){ $('#fps').textContent=Math.round(fpsN/fpsAcc)+' fps · '+Settings.quality.toUpperCase(); fpsAcc=0; fpsN=0; }
+  fpsAcc+=dt; fpsN++; if (fpsAcc>0.5){ $('#fps').textContent=Math.round(fpsN/fpsAcc)+' fps · '+Perf.label()+(DynRes.k<0.999&&(Settings.dynRes||Settings.superPerf)?' · '+Math.round(DynRes.scale()*100)+'%':''); fpsAcc=0; fpsN=0; }
 }
 
 // ---------- Boot ----------

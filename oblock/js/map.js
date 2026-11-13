@@ -1035,7 +1035,8 @@ const Glass = {
     if (p.col){ const i=colliders.indexOf(p.col); if (i>=0) colliders.splice(i,1); p.col=null; }   // nothing left in the opening
     this.write(p);
     const d=(dir||new V3(0,0,1)).clone().setY(0).normalize();
-    for (let i=0;i<12;i++){
+    const nFrag={full:12,reduced:7,minimal:3}[Perf.fx()]||12;
+    for (let i=0;i<nFrag;i++){
       const f=this.frags.length<64 ? {} : this.frags.shift();
       const u=Math.random(), v=Math.random(), [a,b,,dd]=p.corners;
       f.p=a.clone().lerp(b,u).add(dd.clone().sub(a).multiplyScalar(v));

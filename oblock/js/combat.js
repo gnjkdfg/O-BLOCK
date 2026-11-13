@@ -20,8 +20,10 @@ const FX = {
     this.flashT=0; this.puffI=0; this.trI=0; this.boomT=0;
   },
   tracer(a,b,col){ const T=this.tracers[this.trI++%this.tracers.length]; const p=T.l.geometry.attributes.position.array; p.set([a.x,a.y,a.z,b.x,b.y,b.z]); T.l.geometry.attributes.position.needsUpdate=true; T.l.material.color.set(col||'#ffd9a0'); T.l.visible=true; T.t=0.05; },
-  hole(p,n){ const m=this.holes[this.holeI++%this.holes.length]; m.position.copy(p).addScaledVector(n,0.01); m.lookAt(p.clone().add(n)); m.visible=true; },
-  puff(p,col,size=0.35,life=0.35){ const P_=this.puffs[this.puffI++%this.puffs.length]; P_.s.position.copy(p); P_.s.material.color.set(col); P_.s.scale.setScalar(size); P_.s.visible=true; P_.t=life; P_.life=life; P_.v.set(rr(-0.3,0.3),rr(0.3,0.8),rr(-0.3,0.3)); P_.size=size; },
+  hole(p,n){ const fx=Perf.fx(), cap=fx==='minimal'?8:fx==='reduced'?20:this.holes.length;
+    if (cap<this.holes.length) for (let i=cap;i<this.holes.length;i++) this.holes[i].visible=false;
+    const m=this.holes[this.holeI++%cap]; m.position.copy(p).addScaledVector(n,0.01); m.lookAt(p.clone().add(n)); m.visible=true; },
+  puff(p,col,size=0.35,life=0.35){ const fx=Perf.fx(); if (fx!=='full' && Math.random()<(fx==='minimal'?0.7:0.35)) return; const P_=this.puffs[this.puffI++%this.puffs.length]; P_.s.position.copy(p); P_.s.material.color.set(col); P_.s.scale.setScalar(size); P_.s.visible=true; P_.t=life; P_.life=life; P_.v.set(rr(-0.3,0.3),rr(0.3,0.8),rr(-0.3,0.3)); P_.size=size; },
   muzzle(p,scale){ this.flash.position.copy(p); this.flash.scale.setScalar(0.35*scale); this.flash.material.rotation=Math.random()*PI; this.flash.visible=true; this.flashT=0.05; this.lightFlash(p,scale); },
   lightFlash(p,scale){ this.light.position.copy(p); this.light.intensity=1.6*scale; },
   explode(p,col,size){ this.boom.position.copy(p).add(new V3(0,0.4,0)); this.boom.material.color.set(col); this.boom.scale.setScalar(size); this.boom.visible=true; this.boomT=0.18; this.boomSize=size;
@@ -38,7 +40,7 @@ const FX = {
 const Smoke = {
   list:[], i:0,
   init(scene){ for (let k=0;k<30;k++){ const s=new THREE.Sprite(new THREE.SpriteMaterial({map:FX.puffTex,color:'#c9c9c9',transparent:true,depthWrite:false,opacity:0})); s.visible=false; scene.add(s); this.list.push({s,t:0,life:1,v:new V3()}); } },
-  puff(p,size,o){ const S=this.list[this.i++%this.list.length]; S.s.position.copy(p); S.size=size*0.3; S.s.scale.setScalar(S.size); S.life=S.t=o&&o.life||rr(3,5.5); S.alpha=o&&o.alpha||null; if (o&&o.v) S.v.copy(o.v); else S.v.set(rr(-0.12,0.12),rr(0.15,0.35),rr(-0.12,0.12)); S.s.visible=true; },
+  puff(p,size,o){ const fx=Perf.fx(); if (fx==='minimal' || (fx==='reduced' && Math.random()<0.5)) return; const S=this.list[this.i++%this.list.length]; S.s.position.copy(p); S.size=size*0.3; S.s.scale.setScalar(S.size); S.life=S.t=o&&o.life||rr(3,5.5); S.alpha=o&&o.alpha||null; if (o&&o.v) S.v.copy(o.v); else S.v.set(rr(-0.12,0.12),rr(0.15,0.35),rr(-0.12,0.12)); S.s.visible=true; },
   update(dt){ for (const S of this.list) if (S.t>0){ S.t-=dt; const k=1-S.t/S.life; S.s.position.addScaledVector(S.v,dt); S.v.multiplyScalar(1-dt*0.3); S.s.scale.setScalar(S.size*(1+k*4)); S.s.material.opacity=Math.sin(Math.min(1,k*4)*PI/2)*(1-k)*(S.alpha||0.45); if (S.t<=0) S.s.visible=false; } },
 };
 

@@ -29,6 +29,8 @@ class RemoteEnt {
     if (this.ride){ const v=this.ride; this.pos.set(v.pos.x, v.pos.y+v.S.deck, v.pos.z); this.yaw=v.yaw; }   // riding: stand / sit on the vehicle
     rg.root.position.copy(this.pos); rg.root.rotation.y=this.yaw; this.label.s.visible=this.pos.distanceTo(camera.position)<40;
     const inv=this.vel.clone().applyAxisAngle(new V3(0,1,0),-this.yaw);
+    // far players animate less often on weak settings (same idea as the bots)
+    if (Perf.potato || Settings.perf){ this.animAcc=(this.animAcc||0)+dt; if (this.pos.distanceTo(camera.position)>(Settings.superPerf?22:35) && this.animAcc<1/Perf.botAnimHz()) return; dt=this.animAcc; this.animAcc=0; }
     if (this.ride){ animateCharacter(rg,{speed:0, sit:!this.ride.S.stand, pitch:this.pitch, hold:{weapon:this.weapon, firing:true}}, dt); return; }
     animateCharacter(rg,{speed:this.speed, moveX:inv.x, moveZ:inv.z, sprint:this.speed>6, crouch:this.crouch, pitch:this.pitch, hold:{weapon:this.weapon, firing:true}}, dt);
   }
