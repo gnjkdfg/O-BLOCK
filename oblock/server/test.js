@@ -44,7 +44,8 @@ function client(token){
     ok(bc && bc.profile.owned.cop && bc.profile.cash === 1000, 'buying the Cop costs $5,000 and is saved', bc && bc.profile);
     A.send({ t:'buy', item:'cop' }); const dup = await A.next('reject', m => m.what === 'buy');
     ok(dup && /already owned/.test(dup.why), 'cannot buy the same thing twice');
-    A.send({ t:'buy', item:'sniper' }); const bs = await A.next('reject', m => m.what === 'buy'); ok(bs && /unknown item/.test(bs.why), 'guns are free: there is nothing to buy');
+    A.send({ t:'buy', item:'sniper' }); const bs = await A.next('reject', m => m.what === 'buy'); ok(bs && /unknown item/.test(bs.why), 'most guns are free: there is nothing to buy');
+    A.send({ t:'buy', item:'ar15' }); const b15 = await A.next('reject', m => m.what === 'buy'); ok(b15 && /not enough cash/.test(b15.why), 'the AR-15 costs $10,000 (not enough cash)');
     B.send({ t:'buy', item:'att:scope25' }); const ba = await B.next('reject', m => m.what === 'buy'); ok(ba && /not enough cash/.test(ba.why), 'attachments cost cash too');
 
     console.log('rooms');
@@ -62,14 +63,14 @@ function client(token){
     A.send({ t:'start' }); const st = await B.next('start');
     ok(!!st, 'host starts the match');
     const ea = st.ents.find(e => e.id === wa.id), eb = st.ents.find(e => e.id === wb.id);
-    ok(ea.w === 'sniper' && eb.w === 'ar15', 'every gun is free: each player starts with the gun they picked', [ea.w, eb.w]);
+    ok(ea.w === 'sniper' && eb.w !== 'ar15', 'free guns start as picked; an AR-15 that was not bought is not used', [ea.w, eb.w]);
     ok(st.ents.every(e => S.spawns.some(s => Math.hypot(s[0]-e.pos[0], s[1]-e.pos[2]) < 0.01)), 'everyone spawns on one of the 15 validated points');
 
     console.log('shots and damage (server-validated)');
     // stand the players 10 m apart in the open courtyard
     const put = (c, p) => c.send({ t:'st', p, yaw:0, pitch:0 });
     put(A, [-7, 0, -2]); put(B, [-7, 0, -12]); await sleep(300);
-    B.send({ t:'equip', w:'glock' }); const le = await B.next('reject', m => m.what === 'equip', 400); ok(!le, 'every gun is free: switching from the AR-15 to the Glock at level 1 is accepted'); await sleep(300);
+    B.send({ t:'equip', w:'glock' }); const le = await B.next('reject', m => m.what === 'equip', 400); ok(!le, 'free guns: switching to the Glock at level 1 is accepted'); await sleep(300);
     B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[{ id:wa.id, head:false, d:10 }] }); const h1 = await A.next('hit');
     ok(h1 && h1.target === wa.id && h1.dmg === S.weapons.glock.dmg, 'valid Glock body shot: damage is the server table value (' + S.weapons.glock.dmg + ')', h1);
     B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[{ id:wa.id, head:false, d:10 }] }); const tf = await B.next('reject', m => m.what === 'shot');
