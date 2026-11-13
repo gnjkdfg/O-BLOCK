@@ -341,6 +341,47 @@ const Menu = {
 Game.menuEnvT = PERIOD_SECONDS*4.35;  // sunset
 Game.gameEnvT = PERIOD_SECONDS*2;
 
+/* Developer wall hack: after the normal frame, every living bot / other player is drawn again on its own layer as a
+   see-through red silhouette that ignores walls (depth test off). */
+const WALL_LAYER = 6;
+const WallHack = {
+  mat:null,
+  render(r){
+    if (!this.mat) this.mat=new THREE.MeshBasicMaterial({color:'#ff3030', transparent:true, opacity:0.5, depthTest:false, depthWrite:false, fog:false, skinning:true});
+    const rigs=[]; for (const b of Bots.list) if (b.alive && b.rig) rigs.push(b); if (Net.inMatch) for (const e of Net.targets()) if (e.rig) rigs.push(e);
+    if (!rigs.length) return;
+    for (const t of rigs){ t.rig.root.traverse(o=>{ if (o.isMesh) o.layers.enable(WALL_LAYER); }); }
+    const bg=scene.background, fog=scene.fog, ac=r.autoClear;
+    scene.background=null; scene.fog=null; scene.overrideMaterial=this.mat; r.autoClear=false; camera.layers.set(WALL_LAYER);
+    r.render(scene,camera);
+    camera.layers.set(0); scene.overrideMaterial=null; scene.background=bg; scene.fog=fog; r.autoClear=ac;
+  },
+};
+
+/* Developer aim lock / head lock: while aiming or shooting, the view turns onto the target closest to the crosshair
+   (within 40°, in clear line of sight): its chest for aim lock, its head for head lock. */
+const AimLock = {
+  cur:null,
+  point(t, head){
+    if (head){ const hb=t.rig && t.rig.bones && t.rig.bones.head; if (hb){ const v=new V3(); hb.getWorldPosition(v); v.y+=0.06; return v; } return eyeOf(t); }
+    return chestOf(t);
+  },
+  update(dt){
+    if (!Dev.enabled || Dev.aim==='off' || !P.alive || Arsenal.cur==='knife' || !(Arsenal.ads || Arsenal.trigger)){ this.cur=null; return; }
+    const head=Dev.aim==='head', eye=camera.position, fwd=new V3(-Math.sin(P.yaw)*Math.cos(P.pitch), Math.sin(P.pitch), -Math.cos(P.yaw)*Math.cos(P.pitch));
+    const list=[]; for (const b of Bots.list) if (b.alive && b.rig) list.push(b); if (Net.inMatch) for (const e of Net.targets()) if (e.rig) list.push(e);
+    let best=null, bestA=0.7;   // ~40 degrees
+    for (const t of list){
+      const p=this.point(t, head), d=p.clone().sub(eye), dist=d.length(); if (dist<0.5 || dist>250) continue;
+      let a=Math.acos(clamp(d.dot(fwd)/dist,-1,1)); if (t===this.cur) a*=0.6;   // stick to the current target
+      if (a<bestA && lineOfSight(eye, p)){ bestA=a; best={t,p}; }
+    }
+    this.cur=best&&best.t; if (!best) return;
+    const d=best.p.sub(eye), yaw=Math.atan2(-d.x,-d.z), pitch=Math.atan2(d.y, Math.hypot(d.x,d.z)), k=1-Math.exp(-dt*30);
+    P.yaw+=angleDiff(yaw,P.yaw)*k; P.pitch=clamp(P.pitch+(pitch-P.pitch)*k,-1.5,1.5);
+  },
+};
+
 // ---------- Main loop ----------
 let last=performance.now(), fpsAcc=0, fpsN=0;
 function loop(now){
@@ -356,7 +397,7 @@ function loop(now){
     if (st==='playing'){
       Env.update(dt, camera);
       if (P.alive && !P.inCar && !P.riding){ const n=Math.ceil(dt/0.0167); for (let i=0;i<n;i++) stepPlayer(dt/n); }
-      Rides.update(dt); Net.update(dt);
+      AimLock.update(dt); Rides.update(dt); Net.update(dt);
       updateLean(dt); updateSearch(dt); updateSmoking(rdt); updateUsing(rdt); Effects.update(rdt); footsteps(dt);
       updateHealth(dt);
       Arsenal.update(dt);
@@ -373,6 +414,7 @@ function loop(now){
     const blur = Post.enabled() && st==='playing' ? Post.amount(dt) : 0;
     if (blur>0.01) Post.begin(); else renderer.setRenderTarget(null);
     if (Thermal.active()) Thermal.render(renderer); else renderer.render(scene,camera);
+    if (Dev.wall && st==='playing' && !Thermal.active()) WallHack.render(renderer);
     const showVM = (Rig.mode==='first' || Rig.optic) && !Rig.scoped && !P.inCar && P.alive;
     if (showVM && (UI.scopeOverlay||0)<0.97){ VM.syncLights(hemi,sun); VM.update(dt,Arsenal,{speed:P.riding?0:P.speed,sprint:P.sprinting,grounded:P.grounded}); renderer.clearDepth(); renderer.render(VM.scene,VM.cam); }
     if (blur>0.01) Post.end(blur); else if (Post.enabled()){ Post.ensure(); }

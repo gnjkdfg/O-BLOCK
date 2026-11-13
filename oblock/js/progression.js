@@ -149,13 +149,21 @@ const ProfileAuthority = {
 
 /* Developer menu (Update 5). Nothing in the normal interface points to it: no button, no Settings entry, no hint.
    Opening it: press P 10 times within 10 seconds (key-repeat ignored, another key resets the count, ignored while
-   typing) -> a small password dialog. The password is NEVER in this file, the page or local storage:
-   - online: it is sent once to the O-Block server, which compares it (constant-time) with its private DEV_PASSWORD
-     environment variable and rate-limits attempts; only then does the server accept developer commands from you;
-   - offline local development: an unpublished js/dev.local.js (loaded only on localhost) can provide verify().
-   The published build has neither, so it cannot unlock offline. Unlocks last for this page session only. */
+   typing) -> a small password dialog. Built into the game: works offline and online, on any site.
+   The password itself is never stored: only a salted PBKDF2 fingerprint (150 000 rounds, so guessing is slow), and
+   wrong tries are rate-limited. Online, the O-Block server checks the same password before it accepts developer
+   commands for your profile. Unlocks last for this page session only. */
+const DEV_KEY = { salt:'ba20b3f8355b6ec41e6375b69e0b2c93', iter:150000, dk:'8647ed4f59b77937300e0580ce9da70f8d6eec19e33d87e7ed697112421a50d8' };
+async function devCheck(pw){
+  try {
+    const hexb=h=>new Uint8Array(h.match(/../g).map(x=>parseInt(x,16)));
+    const base=await crypto.subtle.importKey('raw', new TextEncoder().encode(String(pw)), 'PBKDF2', false, ['deriveBits']);
+    const bits=new Uint8Array(await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:hexb(DEV_KEY.salt), iterations:DEV_KEY.iter}, base, 256));
+    const want=hexb(DEV_KEY.dk); let d=0; for (let i=0;i<32;i++) d|=bits[i]^want[i]; return d===0;
+  } catch(e){ return false; }
+}
 const Dev = {
-  enabled:false, remote:false, god:false, infAmmo:false,
+  enabled:false, remote:false, god:false, infAmmo:false, wall:false, aim:'off',
   seq:{n:0, t0:0}, fails:0, lockUntil:0,
   init(){
     addEventListener('keydown', e=>{
@@ -178,20 +186,21 @@ const Dev = {
       const now=performance.now(); if (now<this.lockUntil){ err.textContent='Too many attempts · wait '+Math.ceil((this.lockUntil-now)/1000)+' s'; return; }
       const pw=inp.value; inp.value=''; if (!pw) return; err.textContent='Checking…';
       const r=await this.verify(pw);
-      if (r.ok){ this.fails=0; close(); this.enabled=true; this.remote=!!r.remote; if (Settings.devTag===undefined){ Settings.devTag=true; saveSettings(); } Bus.emit('profile'); Bus.emit('devtag'); this.toggle(); return; }
+      if (r.ok){ this.fails=0; close(); this.enabled=true; this.remote=!!r.remote; if (Settings.devTag===undefined){ Settings.devTag=true; saveSettings(); } Bus.emit('profile'); Bus.emit('devtag'); this.toggle(); if (r.why) UI.toast('DEV · SERVER: '+String(r.why).toUpperCase(),'warn'); return; }
       this.fails++; if (this.fails>=3) this.lockUntil=performance.now()+Math.min(60000, 5000*2**(this.fails-3));
       err.textContent=r.why||'Incorrect password'; inp.focus();
     };
     document.getElementById('devauth-ok').onclick=go; document.getElementById('devauth-cancel').onclick=close;
     inp.onkeydown=e=>{ e.stopPropagation(); if (e.key==='Enter') go(); if (e.key==='Escape') close(); };
   },
-  verify(pw){
-    if (typeof Net!=='undefined' && Net.connected) return Net.devAuth(pw);
-    const cfg=window.OBLOCK_DEV, local=cfg && typeof cfg.verify==='function' && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
-    if (local) return Promise.resolve(cfg.verify(pw)).then(ok=>({ok:!!ok}), ()=>({ok:false}));
-    return Promise.resolve({ok:false, why:'Sign-in needs the O-Block server (connect in Private Match first)'});
+  async verify(pw){
+    const ok=await devCheck(pw);
+    if (!ok) return {ok:false};
+    // online: also sign in on the server so it accepts developer commands for your saved profile
+    if (typeof Net!=='undefined' && Net.connected){ const r=await Net.devAuth(pw); return {ok:true, remote:!!r.ok, why:r.ok?'':r.why}; }
+    return {ok:true};
   },
-  lock(){ this.enabled=false; this.remote=false; this.god=false; this.infAmmo=false; const p=document.getElementById('devpanel'); if (p) p.remove(); Bus.emit('profile'); Bus.emit('devtag'); },
+  lock(){ this.enabled=false; this.remote=false; this.god=false; this.infAmmo=false; this.wall=false; this.aim='off'; const p=document.getElementById('devpanel'); if (p) p.remove(); Bus.emit('profile'); Bus.emit('devtag'); },
   showTag(){ return this.enabled && Settings.devTag!==false; },
   toggle(){
     let p=document.getElementById('devpanel');
@@ -207,6 +216,8 @@ const Dev = {
       <div><label><input id="dv-unl" type="checkbox" ${S.unlimited?'checked':''}> Unlimited cash</label></div>
       <div><label><input id="dv-god" type="checkbox" ${this.god?'checked':''}> Take no damage (testing)</label></div>
       <div><label><input id="dv-ammo" type="checkbox" ${this.infAmmo?'checked':''}> Infinite reserve ammo (testing)</label></div>
+      <div>Aim assist <select id="dv-aim"><option value="off">Off</option><option value="body">Aim lock (body)</option><option value="head">Head lock</option></select><small style="display:block">Locks on while you aim or shoot, to the nearest target you can see near the crosshair</small></div>
+      <div><label><input id="dv-wall" type="checkbox" ${this.wall?'checked':''}> Wall hack (see players and bots through walls)</label></div>
       <div><label><input id="dv-tag" type="checkbox" ${Settings.devTag!==false?'checked':''}> Show DEV tag above my name</label></div>
       <div><button data-c="night">Skip to night</button><button data-c="day">Skip to day</button></div>
       <div><button data-c="lock">Sign out</button><button data-c="close">Close</button></div>`;
@@ -218,6 +229,10 @@ const Dev = {
       if (c==='night'){ Env.t=PERIOD_SECONDS*5+1; return; } if (c==='day'){ Env.t=PERIOD_SECONDS*2+1; return; }
       const arg = c==='setLevel'?v('dv-lvl') : c==='setXP'?v('dv-xp') : c==='addCash'?v('dv-cash') : undefined;
       const r=ProfileAuthority.dev(c,arg); UI.toast(r.ok?'DEV · '+c.toUpperCase():'DEV · '+r.why.toUpperCase(), r.ok?'ok':'warn'); p.remove(); this.toggle(); });
+    const sel=document.getElementById('dv-aim'); sel.value=this.aim;
+    sel.onchange=e=>{ this.aim=e.target.value; UI.toast('DEV · '+(this.aim==='head'?'HEAD LOCK':this.aim==='body'?'AIM LOCK':'AIM ASSIST OFF'),'ok'); };
+    sel.onkeydown=e=>e.stopPropagation();
+    document.getElementById('dv-wall').onchange=e=>{ this.wall=e.target.checked; UI.toast(this.wall?'DEV · WALL HACK ON':'DEV · WALL HACK OFF', 'ok'); };
     document.getElementById('dv-tag').onchange=e=>{ Settings.devTag=e.target.checked; saveSettings(); Bus.emit('devtag'); };
     document.getElementById('dv-unl').onchange=e=>ProfileAuthority.dev('unlimitedCash', e.target.checked);
     document.getElementById('dv-god').onchange=e=>{ this.god=e.target.checked; ProfileAuthority.dev('testing', {god:this.god}); };
