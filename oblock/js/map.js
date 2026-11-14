@@ -1307,6 +1307,7 @@ function buildMap(scene){
   // --- Ground meshes ---
   paintGroundShadows();
   const gtex = new THREE.CanvasTexture(groundCanvas);
+  groundPixels();                 // read the finished ground once, at load (footstep / shell surface lookups)
   gtex.anisotropy = 4;
   const groundMat = lam('#ffffff',gtex);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(GROUND_SIZE,GROUND_SIZE), groundMat);
@@ -1321,13 +1322,16 @@ function buildMap(scene){
 
 
 // surface under the player for footsteps: roofs = concrete, vehicle/bus tops = metal, ground from the painted ground map
+/* The painted ground never changes after the map is built, so its pixels are read once and kept. (Reading single pixels
+   back from the canvas on every footstep and every shell bounce made Chrome copy the canvas back from the GPU each time,
+   which shows up as small hitches on Chromebooks.) */
+function groundPixels(){ return groundPixels.d || (groundPixels.d=gg.getImageData(0,0,GPX,GPX).data); }
 function surfaceUnderPlayer(){
   const p=P.pos;
   if (P.ladder) return 'metal';
   if (p.y>0.35){ for (const b of BUILDINGS) if (p.x>b.x0-0.5&&p.x<b.x1+0.5&&p.z>b.z0-0.5&&p.z<b.z1+0.5) return 'concrete'; return p.y<0.6?'concrete':'metal'; }
-  if (!surfaceUnderPlayer.g) surfaceUnderPlayer.g=groundCanvas.getContext('2d');
   const x=clamp(Math.floor((p.x+GROUND_SIZE/2)*SC),0,GPX-1), z=clamp(Math.floor((p.z+GROUND_SIZE/2)*SC),0,GPX-1);
-  const d=surfaceUnderPlayer.g.getImageData(x,z,1,1).data, r=d[0],g=d[1],b=d[2], l=(r+g+b)/765;
+  const D=groundPixels(), i=(z*GPX+x)*4, r=D[i],g=D[i+1],b=D[i+2], l=(r+g+b)/765;
   if (g>r*1.08 && g>b*1.08) return 'grass';
   return l>0.48 ? 'concrete' : 'asphalt';
 }

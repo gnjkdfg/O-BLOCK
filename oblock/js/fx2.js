@@ -119,9 +119,8 @@ const Casings = {
 // surface at an arbitrary point (casings); falls back to the player-surface logic
 function surfaceAt(x,z,y){
   if (y>0.35){ for (const b of BUILDINGS) if (x>b.x0-0.5&&x<b.x1+0.5&&z>b.z0-0.5&&z<b.z1+0.5) return 'concrete'; return 'metal'; }
-  if (!surfaceUnderPlayer.g) surfaceUnderPlayer.g=groundCanvas.getContext('2d',{willReadFrequently:true});
   const px=clamp(Math.floor((x+GROUND_SIZE/2)*SC),0,GPX-1), pz=clamp(Math.floor((z+GROUND_SIZE/2)*SC),0,GPX-1);
-  const d=surfaceUnderPlayer.g.getImageData(px,pz,1,1).data, l=(d[0]+d[1]+d[2])/765;
+  const D=groundPixels(), i=(pz*GPX+px)*4, d=[D[i],D[i+1],D[i+2]], l=(d[0]+d[1]+d[2])/765;
   if (d[1]>d[0]*1.08 && d[1]>d[2]*1.08) return 'grass';
   return l>0.48 ? 'concrete' : 'asphalt';
 }

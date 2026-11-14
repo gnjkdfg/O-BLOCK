@@ -17,7 +17,7 @@ sun.shadow.bias=-0.0008; scene.add(sun); scene.add(sun.target);
 
 const GFX = {
   potato:{scale:0.5, far:110, fogNear:20, fogFar:100, shadows:false, sky:false},
-  low:  {scale:0.7, far:150, fogNear:30, fogFar:135, shadows:false, sky:false},
+  low:  {scale:0.7, far:120, fogNear:24, fogFar:110, shadows:false, sky:false},
   med:  {scale:1.0, far:260, fogNear:55, fogFar:230, shadows:false, sky:true},
   high: {scale:Math.min(devicePixelRatio||1,1.5), far:320, fogNear:80, fogFar:300, shadows:true, sky:true},
 };
@@ -480,7 +480,7 @@ function loop(now){
     if (Thermal.active()) Thermal.render(renderer); else renderer.render(scene,camera);
     if (Dev.wall && st==='playing' && !Thermal.active()) WallHack.render(renderer);
     const showVM = (Rig.mode==='first' || Rig.optic) && !Rig.scoped && !P.inCar && P.alive;
-    if (showVM && (UI.scopeOverlay||0)<0.97){ VM.syncLights(hemi,sun); VM.update(dt,Arsenal,{speed:P.riding?0:P.speed,sprint:P.sprinting,grounded:P.grounded}); renderer.clearDepth(); renderer.render(VM.scene,VM.cam); }
+    if (showVM && (UI.scopeOverlay||0)<0.97){ VM.syncLights(hemi,sun); VM.update(dt,Arsenal,{speed:P.riding?0:P.speed,sprint:P.sprinting,grounded:P.grounded}); FPArms.sync(); renderer.clearDepth(); renderer.render(VM.scene,VM.cam); }
     if (blur>0.01) Post.end(blur); else if (Post.enabled()){ Post.ensure(); }
     UI.updateHUD(dt);
   } else if (st==='char' || st==='loadout'){

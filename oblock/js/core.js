@@ -28,11 +28,11 @@ const DEFAULT_SETTINGS = {
   superPerf: false,      // Super Performance Mode: the lightest possible settings for very weak computers (overrides the options below)
   renderScale: 0,        // 0 = from the graphics preset; else a fixed resolution 0.25..1
   dynRes: weakDevice,    // Auto resolution: lowers/raises the render resolution to keep the frame rate up
-  simpleMat: false,      // Simple lighting: cheap Lambert shading instead of the realistic (PBR) shading
+  simpleMat: weakDevice, // Simple lighting: cheap Lambert shading instead of the realistic (PBR) shading (on by default for Low / Potato)
   viewDist: 'auto',      // 'auto' (from the preset) | 'far' | 'normal' | 'short' | 'tiny'
   fxLevel: 'full',       // effects: 'full' | 'reduced' | 'minimal' (casings, bullet holes, dust, glass shards, bodies)
   dynLights: true,       // muzzle-flash / explosion lights
-  fpsCap: 0,             // 0 = unlimited; else 15/30/60/120/240
+  fpsCap: weakDevice ? 30 : 0,   // 0 = unlimited; else 15/30/60/120/240 (weak devices: a steady 30 instead of a jumpy 35-55)
   leanMode: 'hold',      // 'hold' | 'toggle'
   crouchMode: 'hold',    // 'hold' (hold the key) | 'toggle' (press once to crouch, again to stand)
   tpDistance: 1.5,       // third-person camera distance (m)
@@ -53,6 +53,12 @@ Settings.fov = clamp(Math.round(+Settings.fov||120), 60, 120);
 if (!Store.get('fovMax', false)){ Settings.fov=120; if (!Settings.aimAssist) Settings.aimAssist='normal'; Store.set('settings', Settings); Store.set('fovMax', true); }
 if (Settings.aimAssist!=='off' && Settings.aimAssist!=='on') Settings.aimAssist='on';   // old Normal / Strong -> the new slight assist
 if (!['potato','low','med','high'].includes(Settings.quality)) Settings.quality='low';
+/* One-time (Chromebook performance update): anyone already on Low or Potato gets Simple lighting and a 30 fps limit.
+   Both can be changed back in Settings → Video. */
+if (!Store.get('perfPass1', false)){
+  if (Settings.quality==='low' || Settings.quality==='potato'){ Settings.simpleMat=true; if (!(Settings.fpsCap>0)) Settings.fpsCap=30; }
+  Store.set('settings', Settings); Store.set('perfPass1', true);
+}
 /* Performance helpers: one place that turns the settings into what each system should do.
    Super Performance Mode wins over everything; otherwise each option is used as chosen. */
 const Perf = {
@@ -62,6 +68,8 @@ const Perf = {
   simple(){ return Settings.superPerf || !!Settings.simpleMat; },
   lights(){ return !Settings.superPerf && Settings.dynLights!==false; },
   botAnimHz(){ return Settings.superPerf ? 6 : Settings.perf||Settings.quality==='potato' ? 8 : 10; },   // far characters
+  // character detail LOD: beyond this distance small character / weapon parts are not drawn (Low, Potato, Performance Mode only)
+  lodDist(){ return Settings.superPerf ? 10 : Settings.quality==='potato' ? 14 : Settings.quality==='low' || Settings.perf ? 20 : Infinity; },
   label(){ return Settings.superPerf ? 'SUPER PERF' : (Settings.quality||'low').toUpperCase()+(Settings.perf?' · PERF':''); },
 };
 function saveSettings(){ Store.set('settings', Settings); }

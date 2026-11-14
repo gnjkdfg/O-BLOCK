@@ -473,6 +473,7 @@ class Bot {
     const tp=t&&this.lastVis?chestOf(t):null, e=eyeOf(this);
     const pitch = tp ? Math.atan2(tp.y-e.y, Math.hypot(tp.x-e.x,tp.z-e.z)) : -0.15;
     this.label.s.visible = camD<40 || (Net.gang && this.team!==undefined && this.team===Net.myTeam);
+    charLOD(this, camD>Perf.lodDist());
     this.animAcc=(this.animAcc||0)+dt;
     if (!far || this.animAcc>1/Perf.botAnimHz()){
       const md=this.moveDir||0;
@@ -481,6 +482,18 @@ class Bot {
       this.animAcc=0;
     }
   }
+}
+/* Character detail LOD (Low / Potato / Performance Mode): past Perf.lodDist() the small parts of a character and its
+   weapon (under 300 triangles each: eyes, laces, drawstrings, sights, lasers, screws...) are skipped by the camera.
+   Uses render layers, not .visible, so the game's own show/hide logic (ski mask, weapon swaps, backpack) is untouched and
+   the thermal / wall-hack layers still see everything. Toggled only when a character crosses the distance. */
+const LOD_TRIS = 300;
+function charLOD(ent, far){
+  if (ent._lod===far && ent._lodRoot===ent.rig.root && ent._lodW===ent.weapon) return;
+  ent._lod=far; ent._lodRoot=ent.rig.root; ent._lodW=ent.weapon;
+  ent.rig.root.traverse(o=>{ if (!o.isMesh) return; const g=o.geometry; if (!g || !g.attributes.position) return;
+    const tris=(g.index?g.index.count:g.attributes.position.count)/3; if (tris>=LOD_TRIS) return;
+    if (far) o.layers.disable(0); else o.layers.enable(0); });
 }
 // nameplate with an optional red DEV tag above the name
 function drawNameTag(L, name, dev, col){ const g=L.c.getContext('2d'); g.clearRect(0,0,128,36);

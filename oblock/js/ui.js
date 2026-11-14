@@ -1,4 +1,8 @@
 'use strict';
+/* HUD writes only touch the page when a value actually changes: every style write makes Chrome recalculate styles,
+   which adds up at 30-60 writes a second on a Chromebook. */
+function setStyle(el, prop, v){ const k='_s_'+prop; if (el[k]!==v){ el[k]=v; el.style[prop]=v; } }
+function setCssVar(el, name, v){ const k='_v_'+name; if (el[k]!==v){ el[k]=v; el.style.setProperty(name, v); } }
 /* Menus, 3D preview stage (weapon inspection + character), loadout station, settings,
    in-game loadout, HUD, toasts and minimap. One visual system (see css/style.css). */
 const $ = s => document.querySelector(s);
@@ -490,7 +494,7 @@ const UI = {
       seg('Super Performance Mode','superPerf',[[false,'Off'],[true,'On']],g);
       box.appendChild(el('p','hint','For very slow computers. Uses the lightest version of everything: low resolution with auto adjustment, short view distance, simple lighting, no shadows, sky, blur or light flashes, minimal effects, and distant players animate less often. Overrides the options below while it is on.'));
       const sp=Settings.superPerf, sub=(...a)=>{ seg(...a); if (sp) box.lastChild.classList.add('dim'); };
-      sub('Graphics quality','quality',[['potato','Potato'],['low','Low'],['med','Medium'],['high','High']],g);
+      sub('Graphics quality','quality',[['potato','Potato'],['low','Low'],['med','Medium'],['high','High']],v=>{ if (v==='low'||v==='potato'){ Settings.simpleMat=true; saveSettings(); } g(); });   // Low / Potato switch Simple lighting on (can be switched back below)
       sub('Performance Mode','perf',[[false,'Off'],[true,'On']],g);
       box.appendChild(el('p','hint','Potato is the lowest preset (half resolution, short view, reduced effects). Performance Mode lowers resolution, shortens draw distance, disables shadows, motion blur and light flashes, and animates distant bots less often.'));
       sub('Render resolution','renderScale',[[0,'Preset'],[1,'100%'],[0.75,'75%'],[0.6,'60%'],[0.5,'50%'],[0.4,'40%'],[0.3,'30%']],g);
@@ -605,11 +609,11 @@ const UI = {
     const moving=Math.min(1,P.speed/4);
     const spread = d.kind==='melee' ? 0.01 : (lerp(d.spreadHip,d.spreadAds,A.adsK) + (d.spreadMove||0)*moving + A.bloom + (d.pellets?d.pelletSpread*0.6:0))*Effects.spreadMul();
     const gap = 3 + spread*innerHeight*1.0 + A.kick*5;
-    const ch=$('#cross'), xh=Settings.crosshair; ch.style.setProperty('--g',gap.toFixed(1)+'px');
+    const ch=$('#cross'), xh=Settings.crosshair; setCssVar(ch,'--g',gap.toFixed(1)+'px');
     // dots are 2/4/6 px at 1080p, scaled with the screen height; the cross keeps its spread behaviour
     if (ch._xh!==xh || ch._h!==innerHeight){ ch._xh=xh; ch._h=innerHeight; ch.className=xh; ch.style.setProperty('--d',(({dotS:2,dotM:4,dotL:6}[xh]||2)*innerHeight/1080).toFixed(2)+'px'); }
-    ch.style.opacity = (xh==='none' || (A.adsK>0.25 && Rig.mode==='first' && d.kind!=='melee') || Perks.nic || P.smoking || P.using || Rig.scoped || Rig.optic || (A.adsK>0.6 && Rig.mode==='first' && d.kind!=='melee') || !P.alive || P.inCar) ? 0 : 1;
-    $('#scope').style.display = Rig.scoped ? 'block' : 'none'; $('#scope').classList.toggle('therm', Thermal.active());
+    setStyle(ch,'opacity', (xh==='none' || (A.adsK>0.25 && Rig.mode==='first' && d.kind!=='melee') || Perks.nic || P.smoking || P.using || Rig.scoped || Rig.optic || (A.adsK>0.6 && Rig.mode==='first' && d.kind!=='melee') || !P.alive || P.inCar) ? '0' : '1');
+    setStyle($('#scope'),'display', Rig.scoped ? 'block' : 'none'); { const th=Thermal.active(), sc=$('#scope'); if (sc._th!==th){ sc._th=th; sc.classList.toggle('therm', th); } }
     // 2.5x: full-screen scope picture once fully aimed in (the 3D scope is shown during the transition)
     const ov = Rig.optic && A.def.attachments && A.def.attachments.includes('scope25') ? clamp((A.adsK-0.82)/0.16,0,1) : 0;
     this.scopeOverlay=ov; const sc=$('#scope25'); if (sc._o!==ov){ sc._o=ov; sc.style.opacity=ov.toFixed(3); }
@@ -617,13 +621,13 @@ const UI = {
       g.strokeStyle='#ff2a1f'; g.lineWidth=5; g.lineJoin='miter'; g.beginPath(); g.moveTo(c-16,c+14); g.lineTo(c,c-5); g.lineTo(c+16,c+14); g.stroke();
       g.fillStyle='#ff2a1f'; g.fillRect(c-2.5,c+5,5,46);
       g.fillStyle='rgba(0,0,0,.9)'; g.fillRect(c-1.2,c+70,2.4,180); g.fillRect(c-250,c-1.2,190,2.4); g.fillRect(c+60,c-1.2,190,2.4); }
-    const rb=$('#reload'); if (A.state==='reload'){ rb.style.display='block'; rb.firstChild.style.width=(A.stateT/A.stateDur*100)+'%'; rb.lastChild.textContent='RELOADING'; }
-    else if (P.search){ rb.style.display='block'; rb.firstChild.style.width=(P.search.t/P.search.dur*100)+'%'; rb.lastChild.textContent='SEARCHING'; }
-    else if (P.smoking){ rb.style.display='block'; rb.firstChild.style.width=(P.smoking.t/3*100)+'%'; rb.lastChild.textContent='SMOKING'; }
-    else if (P.using){ rb.style.display='block'; rb.firstChild.style.width=(P.using.t/P.using.dur*100)+'%'; rb.lastChild.textContent=P.using.kind==='beer'?'DRINKING':'ZYN'; }
-    else rb.style.display='none';
-    const ex=P.alive?clamp((0.25-staminaK())/0.25,0,1):0; $('#stamvig').style.opacity=(ex*0.8).toFixed(3);
-    $('#flashfx').style.opacity=Equip.flashK.toFixed(3);
+    const rb=$('#reload'); if (A.state==='reload'){ setStyle(rb,'display','block'); rb.firstChild.style.width=(A.stateT/A.stateDur*100)+'%'; rb.lastChild.textContent='RELOADING'; }
+    else if (P.search){ setStyle(rb,'display','block'); rb.firstChild.style.width=(P.search.t/P.search.dur*100)+'%'; rb.lastChild.textContent='SEARCHING'; }
+    else if (P.smoking){ setStyle(rb,'display','block'); rb.firstChild.style.width=(P.smoking.t/3*100)+'%'; rb.lastChild.textContent='SMOKING'; }
+    else if (P.using){ setStyle(rb,'display','block'); rb.firstChild.style.width=(P.using.t/P.using.dur*100)+'%'; rb.lastChild.textContent=P.using.kind==='beer'?'DRINKING':'ZYN'; }
+    else setStyle(rb,'display','none');
+    const ex=P.alive?clamp((0.25-staminaK())/0.25,0,1):0; setStyle($('#stamvig'),'opacity',(ex*0.8).toFixed(2));
+    setStyle($('#flashfx'),'opacity',Equip.flashK.toFixed(2));
     this.objectiveMarker();
     if (this.tabHeld) this.scoreboard(true);
     // brief feedback toasts

@@ -55,14 +55,37 @@ const FPArms = {
     let skinHex='#6b4128'; const ca=CharAssets[L.char]; if (ca) ca.scene.traverse(o=>{ if (o.isMesh && /^Skin/.test(o.material.name)) skinHex='#'+o.material.color.getHexString(); });
     const skin=new THREE.MeshLambertMaterial({color:skinHex}), sleeve=new THREE.MeshLambertMaterial({color:L.jacketHex});
     this.mats={skin,sleeve}; this.scene=scene;
+    if (this.inst) for (const m of Object.values(this.inst)){ scene.remove(m); m.dispose(); }
+    this.pieces={cyl:[], sph:[]};
     this.R=this.makeArm(1, skin, sleeve); this.L=this.makeArm(-1, skin, sleeve);
     scene.add(this.R.root); scene.add(this.L.root);
+    /* Performance: the finger / thumb / wrist pieces (about 90 small meshes = 90 draw calls a frame) are drawn as two
+       instanced meshes (2 draw calls). The hierarchy above stays as empty Object3Ds that are posed exactly as before;
+       sync() copies their world matrices into the instances right before the viewmodel is rendered. */
+    if (!FPArms.unitCyl){ FPArms.unitCyl=new THREE.CylinderGeometry(0.92,1,1,8); FPArms.unitCyl.translate(0,0.5,0); FPArms.unitSph=new THREE.SphereGeometry(1,8,6); }
+    const mk=(geo,n)=>{ const m=new THREE.InstancedMesh(geo, skin, n); m.frustumCulled=false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); scene.add(m); return m; };
+    this.inst={cyl:mk(FPArms.unitCyl, this.pieces.cyl.length), sph:mk(FPArms.unitSph, this.pieces.sph.length)};
+    this.sync();
+  },
+  // copy the posed pieces into the instanced meshes (hidden arm = zero-size instances)
+  sync(){
+    if (!this.inst) return;
+    this.R.root.updateMatrixWorld(true); this.L.root.updateMatrixWorld(true);
+    const m=FPArms._m||(FPArms._m=new THREE.Matrix4());
+    for (const k of ['cyl','sph']){ const im=this.inst[k], list=this.pieces[k];
+      for (let i=0;i<list.length;i++){ const p=list[i];
+        if (p.arm.root.visible) m.multiplyMatrices(p.obj.matrixWorld, p.s); else m.makeScale(0,0,0);
+        im.setMatrixAt(i, m); }
+      im.instanceMatrix.needsUpdate=true; }
   },
   recolor(look){ if (!this.mats) return; const L=lookHex(look||CharLook); this.mats.sleeve.color.set(L.jacketHex); },
   makeArm(side, skin, sleeve){
     const A=FP_ARM, root=new THREE.Group(), hand=new THREE.Group(); root.add(hand);
-    const cap=(r,len,mat)=>{ const g=new THREE.Group(); const c=new THREE.Mesh(new THREE.CylinderGeometry(r*0.92,r,len,8),mat); c.position.y=len/2; g.add(c);
-      const s=new THREE.Mesh(new THREE.SphereGeometry(r*0.93,8,6),mat); s.position.y=len; g.add(s); const b=new THREE.Mesh(new THREE.SphereGeometry(r,8,6),mat); g.add(b); return g; };
+    const arm={root}, PC=this.pieces;
+    // a capsule = tapered cylinder + sphere at each end; each piece is an empty marker drawn through the instanced meshes
+    const piece=(kind,g,y,sx,sy,sz)=>{ const o=new THREE.Object3D(); o.position.y=y; g.add(o); PC[kind].push({obj:o, arm, s:new THREE.Matrix4().makeScale(sx,sy,sz)}); };
+    const cap=(r,len,mat)=>{ const g=new THREE.Group();
+      piece('cyl',g,0,r,len,r); piece('sph',g,len,r*0.93,r*0.93,r*0.93); piece('sph',g,0,r,r,r); return g; };
     // palm: rounded slab
     const shp=new THREE.Shape(), w=A.palm.wid, l=A.palm.len, rr=0.014;
     shp.moveTo(-w/2+rr,-l/2); shp.lineTo(w/2-rr,-l/2); shp.quadraticCurveTo(w/2,-l/2,w/2,-l/2+rr); shp.lineTo(w/2,l/2-rr); shp.quadraticCurveTo(w/2,l/2,w/2-rr,l/2);
@@ -89,7 +112,7 @@ const FPArms = {
     const forearm=new THREE.Mesh(sg,sleeve); root.add(forearm);
     const cuff=new THREE.Mesh(new THREE.TorusGeometry(A.sleeveR[0]*0.92,0.006,6,14),sleeve); cuff.rotation.x=PI/2; forearm.add(cuff);
     root.traverse(o=>{ o.frustumCulled=false; });
-    return {side, root, hand, fingers, thumb:[troot,t1,t2], wrist, forearm};
+    return Object.assign(arm, {side, hand, fingers, thumb:[troot,t1,t2], wrist, forearm});
   },
   pose(arm, name){
     const P=HAND_POSES[name]||HAND_POSES.relax, lim=v=>clamp(v,0,PI/2);
