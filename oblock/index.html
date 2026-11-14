@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>O-Block</title>
+<title>O-Blick</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;700&family=Inter:wght@400;600;700&display=swap">
 <link rel="stylesheet" href="css/style.css">
 </head>
@@ -47,16 +47,16 @@
 </div>
 
 <!-- ================= SCREENS ================= -->
-<div class="screen" id="scr-loading"><div class="logo">O-BLOCK</div><p id="load-msg">Building the block…</p></div>
+<div class="screen" id="scr-loading"><div class="logo">O-BLICK</div><p id="load-msg">Building the block…</p></div>
 
 <div class="screen" id="scr-main">
   <div class="menu-left">
     <div class="brand">
       <svg class="crown" viewBox="0 0 64 40"><path d="M4 34 7 8l13 13L32 3l12 18L57 8l3 26z" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linejoin="round" stroke-linecap="round"/><path d="M6 38h52" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
-      <svg class="logo" viewBox="0 0 520 150" role="img" aria-label="O-BLOCK">
+      <svg class="logo" viewBox="0 0 520 150" role="img" aria-label="O-BLICK">
         <defs><filter id="brush" x="-5%" y="-10%" width="110%" height="125%"><feTurbulence type="fractalNoise" baseFrequency="0.035 0.9" numOctaves="2" seed="7" result="n"/><feDisplacementMap in="SourceGraphic" in2="n" scale="9" result="d"/><feTurbulence type="fractalNoise" baseFrequency="0.05 0.55" numOctaves="2" seed="3" result="g"/><feColorMatrix in="g" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 -3.2 2.45" result="mask"/><feComposite in="d" in2="mask" operator="in"/></filter>
         <linearGradient id="chalk" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#cfd2d6"/></linearGradient></defs>
-        <g filter="url(#brush)"><text x="260" y="112" text-anchor="middle" font-family="Oswald,Impact,'Arial Narrow',sans-serif" font-weight="700" font-size="128" font-style="italic" textLength="455" lengthAdjust="spacingAndGlyphs" fill="url(#chalk)" transform="skewX(-8) translate(16 0)">O-BLOCK</text>
+        <g filter="url(#brush)"><text x="260" y="112" text-anchor="middle" font-family="Oswald,Impact,'Arial Narrow',sans-serif" font-weight="700" font-size="128" font-style="italic" textLength="455" lengthAdjust="spacingAndGlyphs" fill="url(#chalk)" transform="skewX(-8) translate(16 0)">O-BLICK</text>
         <path d="M70 132 C 190 120, 330 118, 470 108 L 474 116 C 340 128, 200 132, 74 140 z" fill="#e9e9e9"/></g>
       </svg>
       <div class="tag">Street Shooter · Browser Edition</div>
@@ -75,6 +75,8 @@
   <div id="brief" class="panel"></div>
   <div id="pinfo"></div>
   <button id="btn-guide" class="guidebtn">CONTROLS</button>
+  <button id="btn-hist" class="guidebtn histbtn">RECENT MATCHES</button>
+  <div id="hist" class="panel"></div>
   <div id="guide" class="panel"></div>
 </div>
 
@@ -95,7 +97,8 @@
 <div class="screen cols3" id="scr-loadout">
   <div class="col left panel">
     <h2>LOADOUT</h2>
-    <p class="hint">One firearm per loadout. The knife is always carried.</p>
+    <p class="hint">One primary, one secondary and a melee (the knife, or the Taser in its place).</p>
+    <div class="seg tabs" id="lo-cats"></div>
     <div id="lo-weapons"></div>
     <div id="lo-equip"></div>
   </div>
@@ -134,6 +137,7 @@
     <nav>
       <button id="btn-resume" class="primary">RESUME</button>
       <button id="btn-ploadout">CHANGE LOADOUT</button>
+      <div id="pteam"></div>
       <button id="btn-pcam">CAMERA: 1ST PERSON</button>
       <button id="btn-pfull">FULLSCREEN</button>
       <button id="btn-psettings">SETTINGS</button>
@@ -176,15 +180,12 @@
 <script src="assets/sniper.js"></script>
 <script src="assets/models.js"></script>
 <script src="assets/drako.js"></script>
-<script src="assets/jeff.js"></script>
-<script src="assets/nic.js"></script>
+<script src="assets/murals.js"></script>
 <script src="assets/sfx.js"></script>
 <script src="assets/ar.js"></script>
 <script src="assets/sg.js"></script>
-<script src="assets/cop.js"></script>
-<script src="assets/scooter.js"></script>
-<script src="assets/ebike.js"></script>
-<script src="assets/outer.js"></script>
+<script src="assets/sec.js"></script>
+<script src="assets/mp7.js"></script>
 <script src="js/core.js"></script>
 <script src="js/map.js"></script>
 <script src="js/physics.js"></script>

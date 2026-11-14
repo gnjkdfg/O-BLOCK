@@ -1,3 +1,96 @@
+# O-Blick — visibility, aim assist, MP7 sights/sound, music, performance
+
+- ✅ Outlines: thin line round other characters (red = enemy; team colours in Gang Wars), ordinary depth-tested geometry so walls/fences/cars hide it; no ray casts or post-processing; setting to turn off; off in Super Performance Mode
+- ✅ Lighting floor on characters (dark clothes / shadow / night stay readable; lit characters unchanged)
+- ✅ Aim assist: cone 0.05→0.06, keep 0.075→0.095, slowdown 22%→28%, plus 30% rate-limited tracking of a target you are already on while you are aiming/moving/shooting. Measured: hands off = 0 movement; 8° off target = nothing; no assist through walls (line-of-sight check unchanged)
+- ⚠️ Controller: the game has no gamepad input at all, so there is no controller aim assist to tune
+- ✅ MP7: sight picture rebuilt to the reference (solid rear block with square notch, front post in the notch, eye behind the gun); damage 21→19, falloff starts 20 m (was 30), ×0.5 by 65 m, max range 110 m; new shot + reload sounds cut from the supplied recording
+- ✅ Pause key frees the mouse (no Esc needed); game renamed O-Blick (saves untouched)
+- ✅ Music: old tracks removed; Songs 4–7 as a playlist, one track in memory at a time
+- ✅ Performance: characters merged from 16–25 meshes/skeletons to 3–5 meshes on 1 skeleton (bots, other players, corpses); Glock/Drako/e-bike/3 characters reduced ~45% (triangles and download); model text freed after decoding; menu appears after the guns + your character, the rest (~3 MB) loads behind it; auto quality steps graphics down under 30 fps
+- Tests: server 104/104; browser: boot/staged load, merged characters + ragdoll, outlines day/night/Gang Wars online, aim assist, MP7 ADS, vehicles, trunk/ammo, reconnect
+
+---
+
+# O-Block — reconnect after a dropped connection
+
+- ✅ A connection that drops mid-match (not LEAVE) keeps the player's seat for 30 s: they are taken off the field (can't be shot), everyone sees "LOST CONNECTION · 30s TO REJOIN"
+- ✅ The game retries every 1.5 s with a countdown banner; on success the same account gets the same player id, team, kills/deaths, position and health back
+- ✅ Another account can't take the seat; after 30 s the normal leave runs ("Left early"); a late return goes to the menu as before
+- ✅ A dropped host stays host while they can return (bots resume with them); a solo player's room stays open for them
+- Tests: protocol suite 104/104 (10 new), expiry + solo-room check, two-browser run (player drop and host drop)
+
+---
+
+# O-Block — MP7 / Taser ragdoll / Sawed-Off audio update
+
+`cd server && npm test`: protocol **94/94** (incl. MP7 purchase, 30-round factory mag, 40-round extended mag honoured online only when owned) and progression **43/43** (file + Postgres). Browser: offline runs plus a two-browser online run.
+
+## MP7 ($3,000, primary)
+- ✅ Your imported model (Sketchfab "MP7 - CODMW2019") is used: reduced from 16.9k to 8.9k triangles and 11.4 MB to 450 KB (colour textures 512/256 px, normal/metal maps dropped); grip at the hands, muzzle forward, hands on the pistol grip and handguard
+- ✅ Iron sights: the model's own flip-up front post and rear notch. Measured in ADS: front-post tip and rear-notch centre both land on the screen centre (±1 px)
+- ✅ Stats: 900 rpm, 21 dmg (×1.8 head), best hip-fire of the rifles, strong to ~30 m then falls off (×0.6 by 90 m), 2.0 s reload
+- ✅ Vertical grip: modelled grip under the handguard, left hand moves onto it, recoil −20%
+- ✅ Laser: module on the right rail; beam and dot come from the module and follow the gun (hip, ADS, recoil)
+- ✅ Extended mag: visibly longer magazine (model part), 30 → 40 rounds, HUD "40 / reserve", reload refills to 40, enforced by the server
+- ✅ Bought once and saved (attachments shared with other guns that take them); bots use it; works online
+- ⚠️ No MP7 recording was supplied: it uses the AR-15 shot samples pitched up and shortened
+## Taser
+- ✅ A hit drops the character into the physics ragdoll (the one deaths use), falling away from the shooter: no shaking or twitching
+- ✅ 5 s down, no moving/firing, a second hit doesn't restart it; then a 0.45 s blend back to standing; gun and controls return
+- ✅ Your own view follows your body's head to the ground (steady) and your gun drops out of view; other players see the same ragdoll (two-browser test)
+## Sawed-Off audio
+- ✅ The previous shot clip was silent (cut from the wrong part of your file): re-cut from your recording — shot (instant onset), 2-shell reload, 1-shell reload
+- ✅ Other players now hear its shots and reloads (and every gun's reloads) at the shooter's position
+
+---
+
+# O-Block — Game Update 6 test checklist
+
+Run with `cd server && npm test` (protocol suite **89/89** + progression suite **43/43**; set `TEST_DATABASE_URL` to also run the Postgres half) and in headless Chrome (one browser offline, two browsers against a local server online).
+✅ = verified by running it · ⚠️ = works with a limitation noted
+
+## Deploy (Render) — needed for progress to survive restarts
+1. Create a free Postgres database (Neon or Supabase) and copy its connection string.
+2. On Render → your service → Environment: add `DATABASE_URL` = that string, and `PROFILE_SECRET` = any long random text.
+3. Redeploy. The log should say `storage: postgres`. Existing `profiles.json` profiles are imported once.
+Without `DATABASE_URL` the server still saves to a file (atomic write + backup), but Render's free disk is wiped on every restart.
+
+## 1. Permanent progression
+- ✅ Every kill / purchase / match result is written to storage; "✓ PROGRESS SAVED" shows only after the write is confirmed (pending → saved / failed → retry)
+- ✅ Crash right after a confirmed save (SIGKILL), restart, reconnect: nothing lost (file and Postgres)
+- ✅ Rewards paid once; revision-guarded writes never overwrite a newer copy; leaving mid-match keeps earnings and records "Left early"
+- ✅ Recent matches panel (last 20) on the main menu; character / outfit / loadout / weapon looks follow the account
+## 2. Difficulty rewards
+- ✅ Easy ×0.5 · Normal ×1 · Hard ×1.5 · Expert ×2 (server-side, only with bots), shown in the lobby before the match, locked once it starts; same-player farming pays 0 after 3 kills a minute
+## 3. Vehicles
+- ✅ Cars can't be entered or driven (and car-hop cash is gone); trunks are still searchable
+- ✅ E-scooter and e-bike mount, ride (≈9–11 m in 4 s in the test) and dismount
+## 4. Ammo loot
+- ✅ Trunk ammo chance 60%; each gun gets its own ammo type (primary, secondary, Taser charges), capped at 1.5× the starting reserve, "FULL" when capped; pickups go to the matching gun and stay on the ground if it's full
+## 5. Online mines and flashbangs
+- ✅ Server checks counts, reach and spacing; max 3 mines per player; mines arm after 1.5 s, explode once, damage falls off with distance and is credited to the owner (two-browser test: 98 damage, removed on both screens)
+- ✅ Flashbang throws are shared with every player; each player's flash strength comes from their own distance, line of sight and facing
+## 6. Gang Wars custom teams
+- ✅ 2–4 teams with name, colour, emblem, max players, bots, reward multiplier and starting weapon; players assigned by drag-and-drop or team buttons
+- ✅ Manual assignments are kept exactly (no random teams); unassigned players join the smallest team
+- ✅ Friendly fire (off by default, team kills never score or pay); team switching locked by default, optional (applies at respawn, from the pause menu)
+## 7. Taser ($5,000, replaces the knife)
+- ✅ 20 m hard limit, 5 s stun with ragdoll + camera shake, no move / fire while stunned, a second hit doesn't restart it; server validates all of it (two-browser test)
+## 8. Armory
+- ✅ PRIMARY (Drako, Sniper, AR-15, Shotgun) / SECONDARY (Glock, Sawed-Off, Taser) / EQUIPMENT (knife, flash, mines) tabs; one weapon per slot; 3D preview, price, owned/locked, stats, attachments, equip/buy
+- ✅ Preview no longer re-measures the page every frame and stops redrawing when still (0 redraws/s when idle)
+- ✅ In-game loadout (L) has primary / secondary / melee columns
+## 9. Sawed-Off ($2,500)
+- ✅ 2 shells, 9 pellets, strong up close, 5 m effective range; reload by shell count (2-shell / 1-shell sounds), shells eject on reload; HUD "2 / reserve"; bots use it
+## 10. HUD / purchases
+- ✅ Level, XP, cash, save state on the HUD; every purchase asks for confirmation with the price and the balance after
+## 11. Reliability
+- ✅ Batched saves (250 ms + every 5 s), retry with back-off, never "saved" without confirmation
+- ⚠️ Timing-based tests under software rendering run at ~5–20 fps; one progression check flaked once and passed on two reruns
+
+---
+
 # O-Block v0.7.0 — Game Update 3 test checklist
 
 Tested in headless Chrome (SwiftShader software rendering) plus the server's automated suite (`server/test.js`, 40 checks).
