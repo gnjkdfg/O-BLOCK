@@ -421,3 +421,35 @@ body.superperf *{transition:none!important}
 .srow.dim{opacity:.4;pointer-events:none}
 /* messages on menu screens (purchases, saves): the in-match message box is hidden there */
 #mtoasts{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none}
+/* save indicator (online progression): "saved" only after the server's storage confirms the write */
+#savest{position:fixed;right:14px;bottom:14px;z-index:85;padding:6px 12px;font:700 11px/1 var(--body,sans-serif);letter-spacing:.1em;background:rgba(10,10,10,.8);color:#ddd;border:1px solid rgba(255,255,255,.2);opacity:0;transition:opacity .25s;pointer-events:none}
+#savest.on{opacity:1} #savest.ok{color:#7fe08a;border-color:#3d8a49} #savest.bad{color:#ff8a7a;border-color:#a33}
+/* recent matches panel (main menu) */
+#scr-main .histbtn{right:132px}
+#hist{display:none;position:absolute;right:22px;bottom:58px;z-index:4;width:min(560px,92vw);max-height:60vh;overflow:auto;padding:14px 16px}
+#hist.on{display:block} #hist h3{margin:0 0 8px;font:700 12px var(--body);letter-spacing:.16em;color:var(--gold2)}
+#hist table{width:100%;border-collapse:collapse;font:12px var(--body)} #hist th{text-align:left;color:#8b8d92;font-weight:600;padding:3px 4px} #hist td{padding:4px;border-top:1px solid rgba(255,255,255,.07)} #hist td.c{color:#7fe08a}
+/* Gang Wars team editor */
+.teamed{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.tcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px}
+.tcol{border:1px solid;border-left-width:4px;border-radius:8px;padding:8px;background:rgba(255,255,255,.03);display:flex;flex-direction:column;gap:6px}
+.thead{display:flex;gap:6px;align-items:center}.thead input{flex:1;font-weight:700;color:inherit;min-width:0}.temb{font-size:20px;width:22px;text-align:center}
+.tctl small{display:block;color:var(--mut);font-size:11px;margin-bottom:2px}
+.tswatch{display:flex;flex-wrap:wrap;gap:3px}.tswatch button{width:22px;height:22px;min-width:0;padding:0;border-radius:5px;font-size:13px;line-height:20px}.tswatch button.on{outline:2px solid #fff}
+.tgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px}.tgrid select{width:100%}
+.stepper{display:flex;align-items:center;gap:6px}.stepper button{width:24px;min-width:0;padding:0;height:22px}.stepper b{min-width:14px;text-align:center}
+.tplayers{min-height:38px;border:1px dashed rgba(255,255,255,.18);border-radius:6px;padding:5px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.tplayers.over{background:rgba(255,255,255,.08)}.tplayers.pool small{width:100%;color:var(--mut)}
+.pchip{display:flex;align-items:center;gap:3px;background:rgba(255,255,255,.09);border-radius:14px;padding:2px 4px 2px 9px;cursor:grab;font-size:13px}
+.pchip button{min-width:0;padding:0 5px;height:20px;font-size:12px;background:none;border:0}.tbot{font-size:12px;color:var(--mut)}
+#pteam{display:flex;flex-direction:column;gap:6px}#pteam:empty{display:none}
+.qcols{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.qcol h4{margin:0 0 4px;font-size:12px;color:var(--mut);letter-spacing:.08em}.qcol .qrow{width:100%}
+#lo-cats{margin-bottom:6px;display:flex;flex-wrap:nowrap}#lo-cats button{flex:1;min-width:0;padding-left:4px;padding-right:4px;font-size:11px;white-space:nowrap}
+#buyconf{position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
+#buyconf .panel{min-width:300px;text-align:center}#buyconf .bc-price{font-size:30px;font-weight:800;color:#7ee08a;margin:6px 0}#buyconf .row{justify-content:center;gap:10px}
+#scr-qload .panel{width:min(880px,94vw);max-width:none}
+.qcol .qrow{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:6px 9px;min-height:0}.qcol .qrow small{font-size:11px;text-align:left}.qcol .qrow small:last-child:empty{display:none}
+.msu-body:has(.teamed){max-height:min(64vh,680px)}.msu-body:has(.teamed)~.msu-sum.small{display:none}
+.tcol>button{font-size:11px;padding:4px 8px;align-self:flex-start}
+#rejoin{position:fixed;top:14%;left:50%;transform:translateX(-50%);z-index:70;display:none;padding:8px 16px;border-radius:8px;background:rgba(160,40,30,.92);color:#fff;font-weight:700;letter-spacing:.05em;font-size:14px}
+#mainnav.busy{pointer-events:none;opacity:.45}.loadnote{color:var(--mut);font-size:12px;letter-spacing:.06em;margin:0 0 6px}.loadnote.warn{color:#ff8a7a}
