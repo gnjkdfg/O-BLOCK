@@ -12,13 +12,14 @@
    panel only exists when a local, unpublished config file (js/dev.local.js) is loaded, or, online, when
    the server marks the account as a developer (and logs every action). */
 
+const DIFF_REWARD = { easy:0.5, normal:1, hard:1.5, expert:2 };
 const PROG = {
   xpPerLevel: 1000,                       // flat: every level costs 1,000 XP; levels keep going past 100
   xp:   { kill:100, win:250, participation:50, objective:100, objectiveCap:5, holdWin:250, zaWin:250 },
   cash: { win:100, kill:10, second:50, third:25, participation:10, level:25 },   // level: paid for every level gained
   carHop: { chance:1/3, min:1, max:20, cooldown:120 },          // per vehicle, seconds
   unlock: {},                             // no level locks: every gun is free except the AR-15 ($10,000); attachments are bought with cash
-  price:  { ar15:10000, switch:500, jeff:1000, cop:5000,
+  price:  { ar15:10000, mp7:3000, taser:5000, sawedoff:2500, switch:500, jeff:1000, cop:5000,
             'att:dot_open':100, 'att:dot_closed':125, 'att:scope15':200, 'att:scope25':300, 'att:vgrip':100, 'att:brace':125,
             'att:skeleton':150, 'att:folding':175, 'att:suppressor':250, 'att:compensator':125, 'att:laser':75, 'att:flashlight':75,
             'att:mag_ext':150, 'att:mag_drum':300 },                                       // attachments: bought once, fit every gun they're made for
@@ -42,11 +43,11 @@ const ProfileAuthority = {
   },
   // online: the server's profile is shown (and purchases go to the server); the offline profile is kept aside and restored
   useRemote(p){
-    if (p){ if (!this.local) this.local=this.s; this.s={cash:p.cash, xp:p.xp, owned:Object.assign({switch:false,jeff:false,cop:false},p.owned), paid:[], unlimited:false, remote:true}; }
+    if (p){ if (!this.local) this.local=this.s; this.s={cash:p.cash, xp:p.xp, owned:Object.assign({switch:false,jeff:false,cop:false},p.owned), paid:[], unlimited:false, remote:true, history:p.history||[]}; }
     else if (this.local){ this.s=this.local; this.local=null; }
     Bus.emit('profile');
   },
-  save(){ if (this.s.remote) return; Store.set('profile', {cash:this.s.cash, xp:this.s.xp, owned:this.s.owned, paid:this.s.paid, unlimited:this.s.unlimited, v6:this.s.v6}); },
+  save(){ if (this.s.remote) return; Store.set('profile', {cash:this.s.cash, xp:this.s.xp, owned:this.s.owned, paid:this.s.paid, unlimited:this.s.unlimited, v6:this.s.v6, history:this.s.history||[]}); },
   // ---- queries
   get cash(){ return this.s.unlimited ? Infinity : this.s.cash; },
   get xp(){ return this.s.xp; },
@@ -76,17 +77,21 @@ const ProfileAuthority = {
   },
   addCash(n, why){ this.s.cash += n; this.save(); Bus.emit('cash', {n, why}); Bus.emit('profile'); },
   // ---- matches: one record per match; end-of-match rewards are paid exactly once per match id
+  // bot difficulty pays more or less (same table as the server): Easy 0.5x, Normal 1x, Hard 1.5x, Expert 2x; fixed at the start
+  rewardMul(){ return (this.match && this.match.mul) || 1; },
   beginMatch(mode, variant){
     const id = Date.now().toString(36)+Math.random().toString(36).slice(2,8);
-    this.match = {id, mode, variant, kills:0, objective:0, ended:false, earned:{xp:0, cash:0}, lines:[]};
+    const diff=Settings.botDifficulty||'normal', bots=(mode==='backpack'?ZARules:MatchRules).bots>0;
+    this.match = {id, mode, variant, kills:0, objective:0, ended:false, earned:{xp:0, cash:0, levels:0}, lines:[], diff:bots?diff:null, mul:bots?(DIFF_REWARD[diff]||1):1, lvl0:this.level()};
     this.carHops = {};
     return id;
   },
   // a kill reported by the match (Match.kill is the in-page authority for kills)
   kill(matchId){
     const m=this.match; if (!m || m.id!==matchId || m.ended || Net.inMatch) return;   // online: the server pays kills
-    m.kills++; m.earned.xp+=PROG.xp.kill; m.earned.cash+=PROG.cash.kill;
-    this.addXP(PROG.xp.kill, 'KILL'); this.addCash(PROG.cash.kill, 'KILL');
+    const kx=Math.round(PROG.xp.kill*m.mul), kc=Math.round(PROG.cash.kill*m.mul);
+    m.kills++; m.earned.xp+=kx; m.earned.cash+=kc;
+    this.addXP(kx, 'KILL'); this.addCash(kc, 'KILL');
   },
   objective(matchId, why){
     const m=this.match; if (Net.inMatch || !m || m.id!==matchId || m.ended || m.objective>=PROG.xp.objectiveCap) return;
@@ -99,8 +104,8 @@ const ProfileAuthority = {
     if (this.s.paid.includes(matchId)) return null;              // never paid twice
     this.s.paid.push(matchId); this.s.paid=this.s.paid.slice(-50);
     const lines=[]; let xp=0, cash=0;
-    const add=(label, x, c)=>{ lines.push({label, xp:x, cash:c}); xp+=x; cash+=c; };
-    if (m.kills) lines.push({label:'Kills ×'+m.kills, xp:m.kills*PROG.xp.kill, cash:m.kills*PROG.cash.kill, already:true});
+    const M_=m.mul, add=(label, x, c)=>{ x=Math.round(x*M_); c=Math.round(c*M_); lines.push({label, xp:x, cash:c}); xp+=x; cash+=c; };
+    if (m.kills) lines.push({label:'Kills ×'+m.kills, xp:m.earned.xp, cash:m.earned.cash, already:true});
     if (m.objective) lines.push({label:'Objective ×'+m.objective, xp:m.objective*PROG.xp.objective, cash:0, already:true});
     add('Participation', PROG.xp.participation, PROG.cash.participation);
     if (won){
@@ -112,19 +117,20 @@ const ProfileAuthority = {
     this.s.xp+=xp; this.s.cash+=cash; this.save();
     const lvl1=this.level();
     if (lvl1>lvl0){ const lc=(lvl1-lvl0)*PROG.cash.level; this.s.cash+=lc; cash+=lc; lines.push({label:'Level up ×'+(lvl1-lvl0), xp:0, cash:lc}); this.save(); Bus.emit('levelup', lvl1); }
+    if (M_!==1) lines.push({label:'Reward multiplier ×'+M_+' ('+m.diff+' bots)', xp:0, cash:0, info:true});
+    this.history({mode:m.mode, diff:m.diff, result:won?'Won':place?'#'+place:'Lost', kills:m.kills, xp:xp+m.earned.xp, cash:cash+m.earned.cash, levels:lvl1-(m.lvl0||lvl0)});
     Bus.emit('profile');
-    return {lines, xp, cash, totalXP:xp+m.earned.xp, totalCash:cash+m.earned.cash, level:lvl1, levelBefore:lvl0};
+    return {lines, xp, cash, totalXP:xp+m.earned.xp, totalCash:cash+m.earned.cash, level:lvl1, levelBefore:lvl0, levels:lvl1-(m.lvl0||lvl0)};
+  },
+  // recent matches (offline here; online the server keeps them): newest first, last 20
+  history(h){ if (this.s.remote) return; this.s.history=[Object.assign({at:Date.now()},h)].concat(this.s.history||[]).slice(0,20); this.save(); },
+  // leaving a match early: kill rewards are already banked; record what was earned
+  leaveMatch(){ const m=this.match; if (!m || m.ended || Net.inMatch) return; m.ended=true;
+    if (m.kills || m.objective) this.history({mode:m.mode, diff:m.diff, result:'Left early', kills:m.kills, xp:m.earned.xp, cash:m.earned.cash, levels:this.level()-(m.lvl0||this.level())}); },
+  recent(){ return this.s.history || [];
   },
   // car hopping: 1 in 3 chance of $1-$20, each vehicle only once per cooldown
-  carHop(vehId){
-    if (Net.inMatch){ Net.send({t:'carhop', car:vehId}); return {ok:true, pending:true}; }
-    const now=performance.now()/1000, last=(this.carHops||{})[vehId];
-    if (last!==undefined && now-last < PROG.carHop.cooldown) return {ok:false, why:'searched recently', wait:Math.ceil(PROG.carHop.cooldown-(now-last))};
-    (this.carHops=this.carHops||{})[vehId]=now;
-    if (Math.random() >= PROG.carHop.chance) return {ok:true, amount:0};
-    const amount = PROG.carHop.min + Math.floor(Math.random()*(PROG.carHop.max-PROG.carHop.min+1));
-    this.addCash(amount, 'CAR HOP'); return {ok:true, amount};
-  },
+
   // ---- developer actions: only reachable when Dev.enabled (local config or server-granted); every call is logged
   dev(cmd, arg){
     if (!Dev.enabled) return {ok:false, why:'developer tools are not enabled'};

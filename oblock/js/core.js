@@ -41,6 +41,8 @@ const DEFAULT_SETTINGS = {
   bob: 60,               // first-person head bob strength (0 = off)
   blur: 'off',          // motion blur: 'off' | 'subtle' | 'auto' (subtle on Medium/High)
   fov: 120,              // 60..120 (maxed by default)
+  autoQuality: true,     // step the graphics down automatically when the game runs under 30 fps
+  outlines: 'on',        // thin outline round other players (hidden by walls; off in Super Performance Mode)
   aimAssist: 'on',       // 'off' | 'on': slight slowdown while your crosshair is already on someone (no pull / lock-on)
   botsFire: true,        // test bots shoot back
   showFps: true,
@@ -73,13 +75,22 @@ const Perf = {
   label(){ return Settings.superPerf ? 'SUPER PERF' : (Settings.quality||'low').toUpperCase()+(Settings.perf?' · PERF':''); },
 };
 function saveSettings(){ Store.set('settings', Settings); }
+// model data ships as base64 text in assets/*.js; once a model is decoded its text is dropped (saves ~10 MB of memory)
+function GLBfree(b64){ const G=window.GLB||{}; for (const k in G) if (G[k]===b64){ delete G[k]; return; } }
+function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=()=>{ s.remove(); res(); }; s.onerror=()=>rej('could not load '+src); document.head.appendChild(s); }); }
 
 // One firearm per loadout (+ knife for everyone) and a limited equipment budget.
-const FIREARMS = ['glock','drako','sniper','shotgun','ar15'];
+const FIREARMS = ['glock','drako','sniper','shotgun','ar15','mp7','sawedoff'];
+const PRIMARIES = ['drako','sniper','shotgun','ar15','mp7'], SECONDARIES = ['glock','sawedoff'], MELEES = ['knife','taser'];
 const EQUIP_BUDGET = 3;                               // total grenades + mines carried
-const DEFAULT_LOADOUT = { firearm:'glock', flash:2, mine:1 };
+// firearm = the primary weapon (name kept so older saves load), secondary = pistol slot, melee = knife or Taser
+const DEFAULT_LOADOUT = { firearm:'drako', secondary:'glock', melee:'knife', flash:2, mine:1 };
 const Loadout = Object.assign({}, DEFAULT_LOADOUT, Store.get('loadout2', {}));
-if (!FIREARMS.includes(Loadout.firearm)) Loadout.firearm='glock';
+// older saves had one firearm: a pistol becomes the secondary (with the free Drako as primary), a rifle stays primary
+if (SECONDARIES.includes(Loadout.firearm)){ Loadout.secondary=Loadout.firearm; Loadout.firearm='drako'; }
+if (!PRIMARIES.includes(Loadout.firearm)) Loadout.firearm='drako';
+if (!SECONDARIES.includes(Loadout.secondary)) Loadout.secondary='glock';
+if (!MELEES.includes(Loadout.melee)) Loadout.melee='knife';
 Loadout.flash=clamp(Loadout.flash|0,0,EQUIP_BUDGET); Loadout.mine=clamp(Loadout.mine|0,0,EQUIP_BUDGET-Loadout.flash);
 function saveLoadout(){ Store.set('loadout2', Loadout); }
 
@@ -93,7 +104,7 @@ const ACTIONS = [
   ['forward','Move forward','KeyW'],['back','Move back','KeyS'],['left','Move left','KeyA'],['right','Move right','KeyD'],
   ['jump','Jump / vault','Space'],['sprint','Sprint','ShiftLeft'],['crouch','Crouch','KeyC'],['slide','Slide (while sprinting)','KeyC'],['prone','Prone (toggle)','KeyZ'],
   ['fire','Shoot / attack','Mouse0'],['aim','Aim / heavy stab','Mouse2'],['reload','Reload','KeyR'],
-  ['firearm','Firearm','Digit1'],['knife','Knife','Digit2'],['firemode','Glock fire mode (Switch)','KeyB'],
+  ['firearm','Swap primary / secondary','Digit1'],['knife','Knife / Taser','Digit2'],['firemode','Glock fire mode (Switch)','KeyB'],
   ['interact','Interact / search / pick up','KeyF'],['leanL','Lean left','KeyQ'],['leanR','Lean right','KeyE'],
   ['grenade','Throw flash grenade','KeyG'],['mine','Place landmine','KeyX'],['smoke','Use item: blunt','KeyH'],['beer','Use item: beer','KeyK'],['zyn','Use item: Zyn','KeyJ'],['nic','Kill streak: Tap the Nic','KeyT'],['ability','Character ability','KeyY'],
   ['flashlight','Flashlight (toggle)','KeyU'],['thermal','Sniper thermal (toggle)','KeyN'],

@@ -61,7 +61,7 @@ const Env = {
   apply(dt, cam){
     const R=this.refs, i=this.periodIndex, j=(i+1)%PHASES.length, f=(this.t%PERIOD_SECONDS)/PERIOD_SECONDS;
     const A=PHASES[i], Bp=PHASES[j], s=f*f*(3-2*f); // smoothstep for gentle transitions
-    const night=lerp(A.night,Bp.night,s); this.nightK=night;
+    const night=lerp(A.night,Bp.night,s); this.nightK=night; if (typeof CharLight!=='undefined') CharLight.value.set(0.55, 0.04+0.04*night);   // characters stay readable at night
     const wet=this.wet = damp(this.wet, this.raining?1:0, 0.08, dt||1);
     const rainDim = 1-wet*0.25;
     lerpCol(A.sky,Bp.sky,s,R.scene.background); R.scene.background.multiplyScalar(rainDim);

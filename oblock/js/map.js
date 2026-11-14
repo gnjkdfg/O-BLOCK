@@ -126,47 +126,11 @@ T.sign = canvasTex(128,32,(g,w,h)=>{ g.fillStyle='#111'; g.fillRect(0,0,w,h); g.
 T.siding = canvasTex(64,64,(g,w,h)=>{ g.fillStyle='#d8d4ca'; g.fillRect(0,0,w,h); for (let y=0;y<h;y+=8){ g.fillStyle='rgba(0,0,0,.28)'; g.fillRect(0,y+7,w,1); g.fillStyle='rgba(255,255,255,.18)'; g.fillRect(0,y,w,1); } noise(g,w,h,26); blotches(g,w,h,10,['rgba(90,80,70,.2)','rgba(60,55,50,.18)'],2,8); });
 T.plywood = canvasTex(64,64,(g,w,h)=>{ g.fillStyle='#a88a5e'; g.fillRect(0,0,w,h); g.strokeStyle='rgba(80,55,30,.35)'; for (let i=0;i<9;i++){ g.beginPath(); const y=rnd()*h; g.moveTo(0,y); g.bezierCurveTo(w*0.3,y+rr(-6,6),w*0.6,y+rr(-6,6),w,y+rr(-4,4)); g.stroke(); } noise(g,w,h,20); });
 T.shingle = canvasTex(64,64,(g,w,h)=>{ g.fillStyle='#3a3836'; g.fillRect(0,0,w,h); for (let y=0;y<h;y+=8) for (let x=((y/8)%2)*-6;x<w;x+=12){ g.fillStyle=pick(['#43403d','#353331','#4a4542','#2f2d2b']); g.fillRect(x+1,y+1,10,6); } noise(g,w,h,18); });
-// Graffiti atlas: 4x4 cells of 256x128. Invented tags only.
-function drawTag(g, word, pal, style){
-  g.lineJoin='round'; g.textBaseline='middle';
-  if (style===3){
-    g.rotate(rr(-0.18,0.04));
-    g.font='italic bold 54px "Segoe Script","Brush Script MT",cursive';
-    const w=g.measureText(word).width; g.lineWidth=3.5; g.strokeStyle=pal[0];
-    g.strokeText(word,-w/2,0);
-    g.beginPath(); g.moveTo(-w/2,30); g.quadraticCurveTo(0,44,w/2+10,22); g.stroke();
-    return;
-  }
-  g.rotate(rr(-0.12,0.12));
-  let size=88; g.font=`900 ${size}px Impact,"Arial Black",sans-serif`;
-  let w=g.measureText(word).width;
-  if (w>214){ size*=214/w; g.font=`900 ${size}px Impact,"Arial Black",sans-serif`; w=g.measureText(word).width; }
-  if (style===2){ for(let k=7;k>0;k--){ g.fillStyle=pal[1]; g.fillText(word,-w/2+k,k); } }
-  g.lineWidth = style===1? 18: 20; g.strokeStyle='#0c0c0c'; g.strokeText(word,-w/2,0);
-  if (style===0){ g.lineWidth=10; g.strokeStyle=pal[1]; g.strokeText(word,-w/2,0); }
-  const gr=g.createLinearGradient(0,-size/2,0,size/2);
-  if (style===1){ gr.addColorStop(0,'#f4f4f4'); gr.addColorStop(.5,'#9b9b9b'); gr.addColorStop(1,'#d8d8d8'); }
-  else { gr.addColorStop(0,pal[0]); gr.addColorStop(1,pal[1]); }
-  g.fillStyle=gr; g.fillText(word,-w/2,0);
-  if (style===1){ g.lineWidth=2; g.strokeStyle=pal[0]; g.strokeText(word,-w/2,0); }
-  g.fillStyle='rgba(255,255,255,.75)'; for(let i=0;i<5;i++) g.fillRect(-w/2+rnd()*w, -size*0.25+rnd()*size*0.2, 5, 3);
-  g.strokeStyle= style===1? '#9b9b9b' : pal[0]; g.lineWidth=3;
-  for (let i=0;i<6;i++){ const x=-w/2+rnd()*w, y=size*0.28; g.beginPath(); g.moveTo(x,y); g.lineTo(x,y+rr(8,26)); g.stroke(); }
-  if (rnd()<0.5){ // crown or star
-    g.fillStyle=pal[0]; g.strokeStyle='#0c0c0c'; g.lineWidth=3; const x=w/2-10, y=-size*0.55;
-    g.beginPath(); g.moveTo(x-14,y+10); g.lineTo(x-14,y-4); g.lineTo(x-7,y+3); g.lineTo(x,y-8); g.lineTo(x+7,y+3); g.lineTo(x+14,y-4); g.lineTo(x+14,y+10); g.closePath(); g.fill(); g.stroke();
-  }
-}
-T.graffiti = canvasTex(1024,512,(g)=>{
-  const words=['SKRT','NOVA','KRASH','REKS','DBOY','ZONE 6','WAX','BLAZE','KING','VOID','OG','4EVER','SMOKE','TOXIC','RIP T','HAZE'];
-  const pals=[['#e83a3a','#ffd23f'],['#3fa7ff','#ffffff'],['#9bff3f','#1a6b1a'],['#ff6ad5','#5b1a8a'],['#ffa53f','#7a2a00'],['#e8e8e8','#5a5a5a'],['#ffe23f','#c41d1d'],['#47e0c8','#13505a']];
-  for (let i=0;i<16;i++){
-    const cx=(i%4)*256, cy=Math.floor(i/4)*128;
-    g.save(); g.beginPath(); g.rect(cx+2,cy+2,252,124); g.clip(); g.translate(cx+128,cy+62);
-    drawTag(g, words[i], pals[(i*3)%8], i%4);
-    g.restore();
-  }
-}, false);
+// O-Blick murals (assets/murals.js): six 2:1 cells in a 2 x 3 atlas: the crew wall, the solo portrait, the wordmark
+// (cut out so it is painted straight on the wall), the duo, and two combined walls. Replaces the old invented tags.
+T.graffiti = new THREE.Texture(); T.graffiti.anisotropy = 4;
+if (window.MURALS){ const img = new Image(); img.onload = () => { T.graffiti.image = img; T.graffiti.needsUpdate = true; if (M.graffiti) M.graffiti.visible = true; }; img.src = 'data:image/webp;base64,' + window.MURALS; delete window.MURALS; }
+const MURAL_CELLS = 6;   // the mural material stays hidden until the image is decoded (no black boxes)
 
 // ---------- Materials ----------
 const lam = (color, map, extra={}) => new THREE.MeshLambertMaterial(Object.assign({color, map: map||null}, extra));
@@ -190,7 +154,7 @@ const M = {
   fire: new THREE.MeshBasicMaterial({color:'#ff8a2a'}),
   sign: new THREE.MeshBasicMaterial({map:T.sign}),
   chain: lam('#ffffff',T.chain,{alphaTest:0.5,side:THREE.DoubleSide}),
-  graffiti: lam('#ffffff',T.graffiti,{alphaTest:0.4,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2}),
+  graffiti: lam('#ffffff',T.graffiti,{alphaTest:0.4,polygonOffset:true,polygonOffsetFactor:-2,polygonOffsetUnits:-2, visible:!!T.graffiti.image}),
   mattress: lam('#bdb39a',T.grime), couch: lam('#5b4a3a',T.grime),
   skyline: new THREE.MeshBasicMaterial({color:'#7d868d', map:canvasTex(128,256,(g,w,h)=>{
     // distant towers: window grid with a few lit / dark panes (tinted by the fog colour each frame)
@@ -283,10 +247,10 @@ function part(F,mat,w,h,d,lx,ly,lz,o={}){
 }
 const cylGeo = (r1,r2,h,seg=8) => new THREE.CylinderGeometry(r1,r2,h,seg);
 function cyl(F,mat,r,h,lx,ly,lz,o={}){ part(F,mat,0,0,0,lx,ly,lz,Object.assign({geo:cylGeo(o.r2!==undefined?o.r2:r,r,h,o.seg||8)},o)); }
-// Graffiti decal: cell 0..15 from the atlas
+// Graffiti decal: a mural cell from the atlas (any number; wraps to the six murals)
 function decal(F,cell,w,h,lx,ly,lz,ry){
-  const col=cell%4, row=Math.floor(cell/4);
-  part(F,M.graffiti,0,0,0,lx,ly,lz,{ry, geo:planeUV(w,h,0.25,0.25,col*0.25,(3-row)*0.25)});
+  cell%=MURAL_CELLS; const col=cell%2, row=Math.floor(cell/2);
+  part(F,M.graffiti,0,0,0,lx,ly,lz,{ry, geo:planeUV(w,h,0.5,1/3,col*0.5,(2-row)/3)});
 }
 
 // ---------- Map data (from the reference image, top-down) ----------
@@ -1214,7 +1178,7 @@ const OuterModels = {
   load(scene){
     for (const e of this.extra) scene.add(e);
     const dec=name=>new Promise(res=>{ const b64=(window.GLB||{})[name]; if (!b64){ console.warn('building model missing: '+name); return res(null); }
-      const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+      GLBfree(b64); const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
       new THREE.GLTFLoader().parse(buf.buffer,'',g=>res(g.scene),()=>res(null)); });
     return Promise.all([dec('warehouse'), dec('shelter')]).then(([wh,sh])=>{
       for (const src of [wh,sh]) if (src) src.traverse(m=>{ if (m.isMesh){ m.castShadow=true; m.receiveShadow=true; for (const mt of [].concat(m.material)){ mt.side=THREE.DoubleSide; mt.metalnessMap=null; mt.roughnessMap=null; mt.normalMap=null; mt.metalness=0.1; mt.roughness=0.9; mt.needsUpdate=true; } } });

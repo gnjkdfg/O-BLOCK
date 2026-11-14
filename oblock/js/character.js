@@ -28,12 +28,14 @@ function lookHex(l){ if (l.jacketHex) return Object.assign({char:'tracksuit'}, l
 
 /* --------------------------------------------------------------- asset */
 const CharAssets = {};
-function loadCharacterAsset(){ return Promise.all(CHAR_ORDER.map(loadOneCharacter)); }
+const CHAR_FILE={jeff:'assets/jeff.js', cop:'assets/cop.js'};      // the tracksuit model ships with the first load
+function loadCharacterAsset(ids=CHAR_ORDER){ ids=ids.filter(id=>!CharAssets[id]);
+  return Promise.all(ids.map(id=>(CHAR_FILE[id] && !(window.GLB||{})[CHARACTERS[id].glb] ? loadScript(CHAR_FILE[id]) : Promise.resolve()).then(()=>loadOneCharacter(id)))); }
 function loadOneCharacter(id){
   const CharAsset = CharAssets[id] = {scene:null, clips:[]};
   return new Promise((res,rej)=>{
     const b64=(window.GLB||{})[CHARACTERS[id].glb]; if (!b64) return rej('character model missing: '+id);
-    const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+    GLBfree(b64); const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
     new THREE.GLTFLoader().parse(buf.buffer,'',g=>{
       // glTF colours are linear; this renderer outputs linear, so lift them to display values
       const drop=[]; g.scene.traverse(o=>{ if (o.isMesh && /^Icosphere/.test(o.name)) drop.push(o); });
@@ -47,21 +49,93 @@ function loadOneCharacter(id){
   });
 }
 
+/* --------------------------------------------------------------- visibility: lighting floor + outlines
+   Lighting floor: a character is never drawn darker than a share of its own colour plus a touch of grey, so dark
+   clothes and people standing in shadow or at night stay readable. Lit characters are unchanged (no glow).
+   One shared uniform; Env raises it a little at night. */
+const CharLight = {value:new THREE.Vector2(0.55,0.04)};
+function charMat(m){ m.onBeforeCompile=sh=>{ sh.uniforms.charLift=CharLight;
+  sh.fragmentShader='uniform vec2 charLift;\n'+sh.fragmentShader.replace(/vec3 outgoingLight = [^;]+;/, x=>x+' outgoingLight = max(outgoingLight, diffuseColor.rgb*charLift.x + charLift.y);'); }; return m; }
+/* Outline: a thin (about 1.5 px at any distance) line round other characters, drawn as the back faces of a copy of
+   the body pushed outwards on screen. It is ordinary depth-tested geometry, so walls, fences and cars hide it exactly
+   like they hide the character: no ray casts and no post-processing. Red for enemies, team colour in Gang Wars. */
+const OutlinePx = {value:new THREE.Vector2(0.003,0.004)};
+function outlineMat(){ return new THREE.ShaderMaterial({skinning:true, side:THREE.BackSide, fog:false, uniforms:{uPx:OutlinePx, uCol:{value:new THREE.Color('#b03a30')}},
+  vertexShader:`#include <common>
+#include <skinning_pars_vertex>
+uniform vec2 uPx;
+void main(){
+  #include <skinbase_vertex>
+  vec3 objectNormal = normal;
+  #include <skinnormal_vertex>
+  vec3 transformed = position;
+  #include <skinning_vertex>
+  vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  vec2 d = (projectionMatrix * vec4(normalize(normalMatrix * objectNormal), 0.0)).xy;
+  gl_Position.xy += normalize(d + vec2(1e-6)) * uPx * gl_Position.w;
+}`, fragmentShader:`uniform vec3 uCol; void main(){ gl_FragColor = vec4(uCol, 1.0); }`}); }
+// colour (hex) or null to hide; called by bots / remote players when their team or life state changes
+function setOutline(rig, hex){ const h=rig.hull; if (!h) return; const on=!!hex && Settings.outlines!=='off' && !Perf.sup; h.visible=on; if (on) h.material.uniforms.uCol.value.set(hex); }
+
+/* Merged characters (bots, other players, corpses): the 16-25 separate skinned meshes of a character model are
+   joined into at most five (fixed colours / jacket / trousers / hair / ski mask) that share ONE skeleton, plus the
+   outline hull. Built once per character model; every instance reuses the same geometry. */
+const GC=(a,i,k)=>k===0?a.getX(i):k===1?a.getY(i):k===2?a.getZ(i):a.getW(i);
+function mergedTemplate(id){
+  const CA=CharAssets[id]; if (CA.merged!==undefined) return CA.merged;
+  const C=CHARACTERS[id], T=THREE.SkeletonUtils.clone(CA.scene); T.updateMatrixWorld(true);
+  const src=[]; T.traverse(o=>{ if (o.isSkinnedMesh) src.push(o); });
+  const main=src.reduce((a,b)=>b.skeleton.bones.length>a.skeleton.bones.length?b:a), SK=main.skeleton, idx=new Map(SK.bones.map((b,i)=>[b.name,i]));
+  const same=(a,b)=>{ for (let i=0;i<16;i++) if (Math.abs(a.elements[i]-b.elements[i])>1e-4) return false; return true; };
+  const G={}, add=(key,o,col)=>{   // append one source mesh to a group, in the main skeleton's bind space
+    const map=o.skeleton.bones.map((b,i)=>{ const j=idx.get(b.name); return j!==undefined && same(o.skeleton.boneInverses[i], SK.boneInverses[j]) ? j : -1; });
+    const g=o.geometry, P=g.attributes.position, N=g.attributes.normal, SI=g.attributes.skinIndex, SW=g.attributes.skinWeight, n=P.count;
+    for (let i=0;i<n;i++) for (let k=0;k<4;k++) if (GC(SW,i,k)>0 && map[GC(SI,i,k)]<0) return false;
+    const D=G[key]=G[key]||{p:[],n:[],c:[],si:[],sw:[],ix:[]}, base=D.p.length/3, v=new V3(), nm=new THREE.Matrix3().getNormalMatrix(o.bindMatrix);
+    for (let i=0;i<n;i++){ v.fromBufferAttribute(P,i).applyMatrix4(o.bindMatrix); D.p.push(v.x,v.y,v.z); v.fromBufferAttribute(N,i).applyMatrix3(nm).normalize(); D.n.push(v.x,v.y,v.z);
+      D.c.push(col.r,col.g,col.b); for (let k=0;k<4;k++){ const w=GC(SW,i,k); D.si.push(w>0?map[GC(SI,i,k)]:0); D.sw.push(w); } }
+    if (g.index) for (let i=0;i<g.index.count;i++) D.ix.push(base+g.index.getX(i)); else for (let i=0;i<n;i++) D.ix.push(base+i);
+    return true; };
+  const white=new THREE.Color(1,1,1), panel=new THREE.Color(1.25,1.25,1.25);
+  for (const o of src){ const n=o.name, mn=o.material.name, tris=(o.geometry.index?o.geometry.index.count:o.geometry.attributes.position.count)/3;
+    const key = n.startsWith('SkiMask') ? 'SkiMask' : n.startsWith('Hair') ? 'Hair' : n.startsWith(C.top)&&C.topMat.test(mn) ? 'top' : n.startsWith(C.bottom)&&C.botMat.test(mn) ? 'bottom' : 'Body';
+    if (!add(key, o, key==='top'||key==='bottom' ? (/Panel|Rib/.test(mn)?panel:white) : o.material.color)){ CA.merged=null; return null; }   // unexpected rig: keep this model unmerged
+    if (key!=='SkiMask' && tris>=900 && !/^(Hands|Chain)/.test(n)) add('hull', o, white); }
+  const geo=D=>{ const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(D.p,3)); g.setAttribute('normal',new THREE.Float32BufferAttribute(D.n,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(D.c,3)); g.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(D.si,4)); g.setAttribute('skinWeight',new THREE.Float32BufferAttribute(D.sw,4));
+    g.setIndex(D.ix); g.computeBoundingSphere(); g.boundingSphere.radius*=1.6; return g; };
+  if (G.hull){ const D=G.hull, acc=new Map(), key=i=>Math.round(D.p[i*3]*500)+','+Math.round(D.p[i*3+1]*500)+','+Math.round(D.p[i*3+2]*500);   // smooth the hull's normals across seams
+    for (let i=0;i<D.p.length/3;i++){ const k=key(i), a=acc.get(k)||[0,0,0]; a[0]+=D.n[i*3]; a[1]+=D.n[i*3+1]; a[2]+=D.n[i*3+2]; acc.set(k,a); }
+    for (let i=0;i<D.p.length/3;i++){ const a=acc.get(key(i)), L=Math.hypot(a[0],a[1],a[2])||1; D.n[i*3]=a[0]/L; D.n[i*3+1]=a[1]/L; D.n[i*3+2]=a[2]/L; } }
+  const holder=main.parent, ident=new THREE.Matrix4();
+  for (const o of src) o.parent.remove(o);
+  for (const key of ['Body','top','bottom','Hair','SkiMask','hull']){ if (!G[key]) continue;
+    const m=new THREE.SkinnedMesh(geo(G[key]), key==='hull' ? outlineMat() : charMat(new THREE.MeshLambertMaterial({vertexColors:true, skinning:true, name:key})));
+    m.name = key==='top' ? 'MTop' : key==='bottom' ? 'MBottom' : key==='hull' ? 'MHull' : key; m.castShadow=key!=='hull'; holder.add(m); m.bind(SK, ident); }
+  return CA.merged=T;
+}
+
 /* --------------------------------------------------------------- build */
 const B_ = n => n; // bone names are already sanitized by GLTFLoader (hand.L -> handL)
 function buildCharacter(look, opts={}){
-  const L=lookHex(look), C=CHARACTERS[L.char]||CHARACTERS.tracksuit, CharAsset=CharAssets[L.char]||CharAssets.tracksuit;
-  const model=THREE.SkeletonUtils.clone(CharAsset.scene);
+  const L=lookHex(look); if (!CHARACTERS[L.char] || !(CharAssets[L.char]&&CharAssets[L.char].scene)) L.char='tracksuit';   // not loaded (yet): the tracksuit is always there
+  const C=CHARACTERS[L.char], CharAsset=CharAssets[L.char];
+  const tpl=opts.merged ? mergedTemplate(L.char) : null;
+  const model=THREE.SkeletonUtils.clone(tpl||CharAsset.scene);
   model.rotation.y=PI;                          // model faces +Z; game forward is -Z
   const root=new THREE.Group(), pose=new THREE.Object3D(); root.add(pose); pose.add(model);   // pose: whole-body tilt (prone)
   const bones={}, meshes=[];
   model.traverse(o=>{
     if (o.isBone) bones[o.name]=o;
     if (o.isMesh){
-      o.material=o.material.clone(); meshes.push(o);
+      o.material=o.material.clone(); if (o.name!=='MHull') charMat(o.material); meshes.push(o);
       if (o.name.startsWith('SkiMask')) o.visible=false;     // Blood Hound Mode accessory
     }
   });
+  let hull=null;
+  if (tpl){ const sk=meshes[0].skeleton; for (const o of meshes){ if (o.skeleton!==sk) o.bind(sk, o.bindMatrix); }   // one skeleton for the whole character
+    const hi=meshes.findIndex(o=>o.name==='MHull'); if (hi>=0){ hull=meshes.splice(hi,1)[0]; hull.material.uniforms.uPx=OutlinePx; hull.visible=false; } }
   const rest={}; for (const k in bones) rest[k]=bones[k].quaternion.clone();
   model.updateMatrixWorld(true);
   const mq=new THREE.Quaternion(); model.getWorldQuaternion(mq); mq.invert();
@@ -76,7 +150,7 @@ function buildCharacter(look, opts={}){
   const weaponSlot=new THREE.Group(); holdPivot.add(weaponSlot);
   const prev={}; for (const k in bones) prev[k]=bones[k].quaternion.clone();
   const rigObj={look:L, charId:L.char, C, root, pose, proneK:0, model, bones, meshes, rest, footRest, mixer, idle, walk, armR:arm('R'), armL:arm('L'), legR:leg('R'), legL:leg('L'),
-    holdPivot, weaponSlot, prev, phase:0, modelY:0, walkW:0, rag:null, weapon:null, firstFrame:true};
+    holdPivot, weaponSlot, prev, phase:0, modelY:0, walkW:0, rag:null, weapon:null, firstFrame:true, hull, merged:!!tpl};
   setLookColors(rigObj, L);
   return rigObj;
 }
@@ -87,6 +161,7 @@ function setSkiMask(rig, on){
 function setLookColors(rig, look){
   const L=lookHex(look); L.char=rig.charId; rig.look=L; const C=rig.C;
   for (const o of rig.meshes){ const n=o.name, mn=o.material.name;
+    if (n==='MTop') o.material.color.set(L.jacketHex); else if (n==='MBottom') o.material.color.set(L.pantsHex);
     if (n.startsWith(C.top) && C.topMat.test(mn)) o.material.color.set(L.jacketHex).multiplyScalar(/Panel|Rib/.test(mn)?1.25:1);
     if (n.startsWith(C.bottom) && C.botMat.test(mn)) o.material.color.set(L.pantsHex).multiplyScalar(/Panel/.test(mn)?1.25:1); }
 }
@@ -247,7 +322,31 @@ function plantFoot(rig, leg, pitch){
 /* --------------------------------------------------------------- animation
   st: {speed, moveX, moveZ (root-local velocity), sprint, crouch, slide, air, ladder, climb, vault, pitch,
        ads, hold:{weapon, kick, reloadK, swing, firing, lowReady}, lean} */
+/* Taser stun: the character's own skeleton goes limp into the physics ragdoll (the same one deaths use) and falls in
+   the direction of the hit: no shaking, no twitching. It lies there for the whole stun, then the ragdoll is released
+   and the body blends back into its normal animation over 0.45 s (getting up). t = seconds into the stun, dur = its
+   length, dir = world direction of the hit; call with t<0 to end it early (respawn / death). */
+function stunPose(rig, t, dur, dir){
+  if (t<0 || t>=dur){ endStunRag(rig); return; }
+  if (rig.rag) return;                                   // already down (a second hit does not restart the fall)
+  rig.stunSnap=Object.values(rig.bones).map(b=>[b, b.position.clone(), b.quaternion.clone()]);
+  const d=(dir||new V3(Math.random()-0.5,0,Math.random()-0.5)).clone(); d.y=0; if (d.lengthSq()<1e-6) d.set(0,0,1);
+  Ragdoll.start(rig, d, {force:0.3, part:'chest'}); rig.rag.stun=true;
+}
+function endStunRag(rig){
+  if (!rig.rag || !rig.rag.stun) return;
+  rig.getUp={t:0, from:rig.stunSnap.map(([b])=>[b, b.position.clone(), b.quaternion.clone()])};
+  for (const [b,p,q] of rig.stunSnap){ b.position.copy(p); b.quaternion.copy(q); }
+  rig.rag=null; rig.stunSnap=null; rig.weaponSlot.visible=true;
+}
 function animateCharacter(rig, st, dt){
+  _animateCharacter(rig, st, dt);
+  const g=rig.getUp; if (!g || rig.rag) return;          // getting up: ease from the lying pose into the live animation
+  g.t+=dt; const k=Math.min(1,g.t/0.45), e=k*k*(3-2*k);
+  for (const [b,p,q] of g.from){ b.position.lerpVectors(p, b.position, e); b.quaternion.slerpQuaternions(q, b.quaternion.clone(), e); }
+  if (k>=1) rig.getUp=null;
+}
+function _animateCharacter(rig, st, dt){
   if (rig.rag){ Ragdoll.step(rig, dt); return; }
   const b=rig.bones, sp=st.speed||0;
   // ---- choose locomotion mode
@@ -418,7 +517,7 @@ function animateCharacter(rig, st, dt){
   const hp=w.tpHold.slice();
   let rx=(hold.kick||0)*0.14, rz=0, ry=0;
   if (lowRun){
-    if (w.id==='glock'){ hp[0]=0.24; hp[1]=-0.58+Math.abs(sph)*0.03; hp[2]=-0.1-sph*0.14; rx=-1.15+sph*0.25; }       // pistol down at the side, swinging with the stride (reference run)
+    if (w.id==='glock' || w.id==='taser'){ hp[0]=0.24; hp[1]=-0.58+Math.abs(sph)*0.03; hp[2]=-0.1-sph*0.14; rx=-1.15+sph*0.25; }       // pistol down at the side, swinging with the stride (reference run)
     else if (w.id==='knife'){ hp[0]=0.22; hp[1]=-0.5+Math.abs(sph)*0.1; hp[2]=-0.05-sph*0.3; rx=-0.9+sph*0.4; }   // knife arm swings naturally
     else if (w.id!=='knife'){ hp[0]=0.2; hp[1]=-0.32+Math.abs(sph)*0.025; hp[2]=-0.3; rx=-0.5+sph*0.06; ry=0.32; } // rifle low-ready on the right side (visible from the over-the-shoulder camera), bobbing with the stride
   }
@@ -457,8 +556,8 @@ function animateCharacter(rig, st, dt){
   }
   gripHand(rig, rig.armR, w.model.localToWorld(w.grip.clone()), wq, w.id==='knife'?'knifeR':'gripR', poleR);
   if (hold.supportOverride){ solveArmIK(rig, rig.armL, hold.supportOverride, poleL); relaxHand(rig, rig.armL); }
-  else if (w.id==='knife' || (lowRun && w.id==='glock')) swingArm(rig.armL, rig.phase+0.5, runAmp);
-  else gripHand(rig, rig.armL, w.model.localToWorld(w.support.clone()), wq, w.id==='glock'?'wrapL':'supportL', poleL);
+  else if (w.id==='knife' || (lowRun && (w.id==='glock'||w.id==='taser'))) swingArm(rig.armL, rig.phase+0.5, runAmp);
+  else gripHand(rig, rig.armL, w.model.localToWorld(w.support.clone()), wq, w.id==='glock'||w.id==='taser'?'wrapL':'supportL', poleL);
 }
 
 /* --------------------------------------------------------------- ragdoll
@@ -559,7 +658,7 @@ const Ragdoll = {
     relaxHand(rig, rig.armR); relaxHand(rig, rig.armL);
     // sleep once settled (no more per-frame work until despawn)
     R.still = move<0.004*N ? R.still+dt : 0;
-    if (R.t>1.5 && R.still>0.6) R.sleep=true;
+    if (R.t>1.5 && R.still>0.6 && !R.stun) R.sleep=true;
   },
 };
 // Corpses: pooled ragdoll bodies that despawn after exactly 10 seconds.
@@ -567,7 +666,7 @@ const Corpses = {
   pool:[], live:[],
   spawn(srcRig, hitDir, opts){
     const pi=this.pool.findIndex(r=>r.charId===srcRig.charId);
-    let rig = pi>=0 ? this.pool.splice(pi,1)[0] : null; if (!rig){ rig=buildCharacter(srcRig.look); scene.add(rig.root); }
+    let rig = pi>=0 ? this.pool.splice(pi,1)[0] : null; if (!rig){ rig=buildCharacter(srcRig.look,{merged:true}); scene.add(rig.root); }
     setSkiMask(rig, srcRig.meshes.some(o=>o.name.startsWith('SkiMask')&&o.visible));
     setLookColors(rig, srcRig.look);
     rig.root.visible=true; for (const m of rig.meshes) m.frustumCulled=false;   // bones travel away from the root

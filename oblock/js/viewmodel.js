@@ -100,7 +100,10 @@ const VM = {
       else { const e=Math.sin(k*PI); p.x += lerp(0.12,-0.2,k)*e*1.4; p.y += 0.06*e; r.y += lerp(0.9,-1.2,k)*e; r.z += lerp(-0.6,1.0,k)*e; }
     }
     this.wroot.position.copy(p); this.wroot.rotation.copy(r);
-    if (w.parts.mag){ const m=w.parts.mag; if (m.userData.y0===undefined) m.userData.y0=m.position.y; m.position.y = m.userData.y0 + magOff*(w.id==='drako'||w.id==='ar15'?0.12:w.id==='glock'?4:2); m.visible = magOff>-0.95 || w.id==='sniper'; }
+    // tased: the gun and hands drop out of view while you lie in the ragdoll, and come back up as you recover
+    this.stunK=damp(this.stunK||0, P.stunT>0?1:0, P.stunT>0?5:4, dt);
+    if (this.stunK>0.001){ this.wroot.position.y-=0.55*this.stunK; this.wroot.rotation.x-=0.9*this.stunK; } this.root.visible=this.stunK<0.97;
+    if (w.parts.mag){ const m=w.parts.mag; if (m.userData.y0===undefined) m.userData.y0=m.position.y; m.position.y = m.userData.y0 + magOff*(w.id==='drako'||w.id==='ar15'||w.id==='mp7'?0.12:w.id==='glock'?4:2); m.visible = magOff>-0.95 || w.id==='sniper'; }
     // shotgun pump stroke: weapon rocks back and the support hand slides the forend
     this.pumpK = w.id==='shotgun' && A.state==='pump' ? Math.sin(clamp(A.stateT/A.stateDur,0,1)*PI) : 0;
     if (this.pumpK){ this.wroot.position.z += this.pumpK*0.02; this.wroot.rotation.x += this.pumpK*0.06; }

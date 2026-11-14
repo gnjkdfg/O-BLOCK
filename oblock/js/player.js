@@ -117,8 +117,10 @@ function endSlide(){ if (!P.slide) return; P.slide=null; Snd.slideStop(); }
 
 function stepPlayer(dt){
   const p=P.pos, v=P.vel;
-  const f=(Input.held('forward')?1:0)-(Input.held('back')?1:0);
-  const r=(Input.held('right')?1:0)-(Input.held('left')?1:0);
+  // tased: no movement input (and no firing, see Arsenal.canFire) until the stun wears off
+  const stunned=P.stunT>0; if (stunned){ P.stunT=Math.max(0,P.stunT-dt); P.jumpQueued=false; if (P.stunT<=0) Bus.emit('toast',{t:'YOU CAN MOVE AGAIN',kind:'ok',quiet:true}); }
+  const f=stunned?0:(Input.held('forward')?1:0)-(Input.held('back')?1:0);
+  const r=stunned?0:(Input.held('right')?1:0)-(Input.held('left')?1:0);
   if (P.anim){
     const A=P.anim; A.t+=dt/A.dur; const k=Math.min(1,A.t), e=k*k*(3-2*k);
     p.lerpVectors(A.from,A.to,e); p.y += Math.sin(k*PI)*A.arc;
@@ -219,15 +221,7 @@ function leanOffset(){
   return Math.sign(P.lean)*Math.min(Math.abs(P.lean)*0.38, maxOff);
 }
 
-// ---- Vehicles ----
-function nearestCar(){
-  let best=null, bd=2.0;
-  for (const car of interactCars) for (const e of car.exits.slice(0,2)){
-    const [x,z]=toWorld(car.F,e[0],e[1]); const d=Math.hypot(P.pos.x-x,P.pos.z-z);
-    if (d<bd && Math.abs(P.pos.y)<1){ bd=d; best=car; }
-  }
-  return best;
-}
+// ---- Vehicles: cars are scenery now (trunks are still searchable); scooters/e-bikes live in vehicles.js ----
 // searchable vehicles: search the trunk / rear of any car (one search per vehicle per match)
 function nearestSearchable(){
   let best=null, bd=1.7;
@@ -247,22 +241,10 @@ function updateSearch(dt){
 function interact(){
   if (!P.alive || P.anim) return;
   if (P.riding){ Rides.dismount(); return; }
-  if (P.inCar){
-    const car=P.inCar;
-    for (const e of car.exits){
-      const [x,z]=toWorld(car.F,e[0],e[1]);
-      if (pointFree(x,z,0.6,1.7,RADIUS)){ P.pos.set(x,0,z); P.vel.set(0,0,0); P.inCar=null; car.target=-1.1; Snd.door(); setTimeout(()=>{car.target=0;},900); return; }
-    }
-    return;
-  }
   if (P.ladder){ detachLadder(false); return; }
   if (Pickups.tryPick()) return;
   if (Mode.tryPickBackpack()) return;
   const lad=nearLadder(); if (lad){ attachLadder(lad); return; }
-  const car=nearestCar();
-  if (car){ P.inCar=car; P.crouch=false; endSlide(); Arsenal.ads=false; car.target=-1.1; Snd.door(); setTimeout(()=>{ if(P.inCar===car) car.target=0; },700);
-    // car hopping: rummage the cabin for loose cash (1 in 3, $1-$20, once per vehicle per cooldown)
-    const h=ProfileAuthority.carHop(car.name); if (h.pending){} else if (h.ok) setTimeout(()=>Bus.emit('carhop',h.amount),500); else Bus.emit('toast',{t:'NOTHING LEFT IN THIS CAR · '+h.wait+'s',kind:''}); return; }
   if (Rides.tryMount()) return;
   const s=nearestSearchable(); if (s) startSearch(s);
 }
@@ -378,6 +360,7 @@ const PlayerChar = {
       air:!P.grounded&&!P.ladder&&!P.anim&&P.airT>0.12, ladder:!!P.ladder, climb:P.climb, vault:!!P.anim, vaultK:P.anim?P.anim.t:0, land:P.landT||0, pitch:P.pitch, ads:A.adsK>0.3, lean:P.lean,
       hold:{weapon:this.weapon, kick:A.kick*(this.weapon?this.weapon.kickMul:1)*(A.cur==='glock'&&A.glockAuto?GLOCK_SWITCH_RECOIL:1), reloadK, supportOverride, firing:A.recoilP>0||A.adsK>0.3,
         lowReady:P.speed>3.2 && !P.crouch && !P.riding, smoking:!!P.smoking||!!U, nicT:Perks.nic?Perks.nic.t:null, nic:this.nic, smokeT:P.smoking?P.smoking.t:U?3*U.t/U.dur:0, blunt:item||this.blunt, swing: A.swing>0 ? 1-A.swing/A.swingDur : 0}}, dt);
+    if (P.stunT>0) stunPose(rg, (P.stunDur||5)-P.stunT, P.stunDur||5, P.stunDir); else stunPose(rg,-1);   // tased: ragdoll (third person + the body you see)
   },
 };
 
@@ -432,13 +415,18 @@ const Rig = {
       const s=P.inCar.seat, [x,z]=toWorld(P.inCar.F,s[0],s[2]);
       camera.position.set(x,s[1],z); this.eyeY=P.pos.y+P.height-0.12; return;
     }
-    const target2 = P.pos.y + P.height - 0.12 - (P.landT||0)*0.11*((Settings.camMotion??100)/100);
+    let target2 = P.pos.y + P.height - 0.12 - (P.landT||0)*0.11*((Settings.camMotion??100)/100);
+    const R=PlayerChar.rig&&PlayerChar.rig.rag;   // tased: the view rides the ragdoll's head down to the ground (smoothly, no shake) and comes back up after
+    if (P.stunT>0 && R && R.stun){ const i=R.idx.head*3; this.stunEye=new V3(R.x[i],R.x[i+1]+0.06,R.x[i+2]); this.stunK=damp(this.stunK||0,1,6,dt); }
+    else if (this.stunK>0.001) this.stunK=damp(this.stunK,0,5,dt);
+    if (this.stunK>0.001){ camera.rotation.z+=0.35*this.stunK; camera.rotation.x+=0.25*this.stunK; }
     if (Math.abs(target2-this.eyeY) > 1.2 || P.ladder || P.anim) this.eyeY = target2;
     else this.eyeY = damp(this.eyeY, target2, P.slide?10:18, dt);
     const right=new V3(Math.cos(P.yaw),0,-Math.sin(P.yaw));
     const fwdFlat=new V3(-Math.sin(P.yaw),0,-Math.cos(P.yaw));
     this.proneK=damp(this.proneK||0, P.prone?1:0, 4, dt);
     const eye = new V3(P.pos.x, this.eyeY, P.pos.z).addScaledVector(right, lean).addScaledVector(fwdFlat, this.proneK*0.55);
+    if (this.stunK>0.001 && this.stunEye){ eye.x=lerp(eye.x,this.stunEye.x,this.stunK); eye.y=lerp(eye.y,this.stunEye.y,this.stunK); eye.z=lerp(eye.z,this.stunEye.z,this.stunK); }
     if (this.proneK>0.01) eye.y = lerp(this.eyeY, P.pos.y+0.32, this.proneK);
     if (!P.alive){
       const c=P.corpse ? (P.corpse.rag ? new V3(P.corpse.rag.x[0],Math.max(0,P.corpse.rag.x[1]-0.3),P.corpse.rag.x[2]) : P.corpse.root.position) : P.pos;

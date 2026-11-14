@@ -58,8 +58,8 @@ const BackpackAuthority = {
 
 // Mode rules (also enforced by the authority: requests that break them are rejected)
 const MODE_RULES = {
-  gang:     {title:'GANG WARS', firearms:['glock','drako','sniper','shotgun','ar15'], switch:true},
-  dm:       {title:'DEATHMATCH', firearms:['glock','drako','sniper','shotgun','ar15'], switch:true},
+  gang:     {title:'GANG WARS', firearms:['glock','drako','sniper','shotgun','ar15','mp7','sawedoff','taser'], switch:true},
+  dm:       {title:'DEATHMATCH', firearms:['glock','drako','sniper','shotgun','ar15','mp7','sawedoff','taser'], switch:true},
   backpack: {title:'THE FIGHT FOR ZA', firearms:['glock'], switch:false},
 };
 const Mode = {

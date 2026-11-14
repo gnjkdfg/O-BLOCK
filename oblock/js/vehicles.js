@@ -16,7 +16,7 @@ const Rides = {
   list:[], assets:{}, snd:null,
   load(){
     const load=name=>new Promise(res=>{ const b64=(window.GLB||{})[name]; if (!b64){ console.warn('vehicle model missing: '+name); return res(null); }
-      const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+      GLBfree(b64); const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
       new THREE.GLTFLoader().parse(buf.buffer,'',g=>{ g.scene.traverse(o=>{ if (o.isMesh){ o.castShadow=true; for (const m of [].concat(o.material)){ m.metalnessMap=null; m.roughnessMap=null; m.metalness=Math.min(m.metalness,0.5); m.needsUpdate=true; } } }); res(g.scene); }, ()=>res(null)); });
     return Promise.all([load('scooter'), load('ebike')]).then(([s,e])=>{ this.assets.scooter=s; this.assets.ebike=e; });
   },

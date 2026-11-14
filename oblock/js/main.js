@@ -58,6 +58,22 @@ const SimpleMat = {
 
 /* Auto resolution: measures the frame rate every second and nudges the render resolution down (fast) or up (slow)
    so the game stays playable on weak computers. Never goes above the chosen resolution. */
+/* Auto quality (Settings → Video, on by default): while playing, if the game averages under 30 fps for 5 seconds it
+   lowers the graphics one step by itself (High → Medium → Low → Potato → Super Performance Mode) and says so. It only
+   ever steps down, waits 4 s after each change, and never raises quality on its own. */
+const AutoQuality = {
+  acc:0, n:0, wait:4,
+  update(rdt){
+    if (Settings.autoQuality===false || Game.state!=='playing' || document.hidden){ this.acc=0; this.n=0; this.wait=4; return; }
+    if (this.wait>0){ this.wait-=rdt; return; }
+    this.acc+=rdt; this.n++; if (this.acc<5) return;
+    const fps=this.n/this.acc; this.acc=0; this.n=0; if (fps>=30 || Settings.superPerf) return;
+    const order=['high','med','low','potato'], i=order.indexOf(Settings.quality); let msg;
+    if (i>=0 && i<3){ Settings.quality=order[i+1]; if (i+1>=2) Settings.simpleMat=true; Settings.dynRes=true; msg='GRAPHICS LOWERED TO '+({med:'MEDIUM',low:'LOW',potato:'POTATO'})[order[i+1]]; }
+    else { Settings.superPerf=true; msg='SUPER PERFORMANCE MODE TURNED ON'; }
+    saveSettings(); Game.applyGfx(); this.wait=4; UI.toast('LOW FRAME RATE ('+Math.round(fps)+' FPS) · '+msg+' · CHANGE IT IN SETTINGS','warn');
+  },
+};
 const DynRes = {
   base:1, k:1, acc:0, n:0, good:0,
   scale(){ return Math.max(Math.min(this.base,0.3), this.base*(Settings.dynRes||Settings.superPerf ? this.k : 1)); },   // never below 30% (or the chosen value if lower)
@@ -127,7 +143,7 @@ const Game = {
     Snd.init(); Snd.playMusic('song_game'); Stage.clear(); Env.t=Game.gameEnvT; Menu.hide();
     Mode.cur=mode; Bots.setCount((mode==='backpack'?ZARules:MatchRules).bots);          // rules are locked from here until the match ends
     Mode.start(mode); Corpses.clear(); Pickups.clear(); Glass.reset(); Equip.clear(); Effects.reset(); Rides.reset(); Thermal.on=false;
-    this.matchId=ProfileAuthority.beginMatch(mode, mode==='backpack'?ZARules.variant:null); this.rewards=null;
+    ProfileAuthority.leaveMatch(); this.matchId=ProfileAuthority.beginMatch(mode, mode==='backpack'?ZARules.variant:null); this.rewards=null;
     for (const s of searchables) s.searched=false;
     respawnPlayer();
     for (const b of Bots.list) b.respawn();
@@ -137,9 +153,10 @@ const Game = {
     Rig.mode=Settings.camMode; UI.camButtons(); requestLock();
     UI.toast(Mode.label(),'obj'); Pings.list=[];
   },
-  pause(){ if (this.state!=='playing') return; this.state='pause'; Snd.uiSfx('open'); Arsenal.trigger=false; Arsenal.ads=false; Snd.autoStop(); for (const k in Input.down) Input.down[k]=false; UI.tabHeld=false; UI.scoreboard(false); UI.show('pause'); $('#hud').style.display='block'; },
+  pause(){ if (this.state!=='playing') return; this.state='pause'; if (document.pointerLockElement) document.exitPointerLock();   // free the mouse without needing Esc (Esc also leaves fullscreen on Chromebooks)
+    Snd.uiSfx('open'); Arsenal.trigger=false; Arsenal.ads=false; Snd.autoStop(); for (const k in Input.down) Input.down[k]=false; UI.tabHeld=false; UI.scoreboard(false); UI.show('pause'); $('#hud').style.display='block'; Net.pauseTeams&&Net.pauseTeams(); },
   resume(){ Mode._lastNow=null; Snd.uiSfx('close'); this.state='playing'; UI.show(null); requestLock(); },
-  toMenu(){ if (Net.inMatch){ Net.leaveMatch(); if (Net.room){ this.state='online'; this.go('online'); Lobby.render(); LaserBeam.hide(); $('#death').style.display='none'; Snd.autoStop(); if (document.pointerLockElement) document.exitPointerLock(); return; } } this.state='main'; this.go('main'); LaserBeam.hide(); $('#death').style.display='none'; Snd.autoStop(); Snd.breath(0); Snd.slideStop(); Snd.playMusic('song_menu'); if (document.pointerLockElement) document.exitPointerLock(); },
+  toMenu(){ ProfileAuthority.leaveMatch(); if (Net.inMatch){ Net.leaveMatch(); if (Net.room){ this.state='online'; this.go('online'); Lobby.render(); LaserBeam.hide(); $('#death').style.display='none'; Snd.autoStop(); if (document.pointerLockElement) document.exitPointerLock(); return; } } this.state='main'; this.go('main'); LaserBeam.hide(); $('#death').style.display='none'; Snd.autoStop(); Snd.breath(0); Snd.slideStop(); Snd.playMusic('song_menu'); if (document.pointerLockElement) document.exitPointerLock(); },
   showEnd(name){
     this.state='end'; if (document.pointerLockElement) document.exitPointerLock();
     $('#end-title').textContent = name==='YOU' ? 'VICTORY' : name+' WINS';
@@ -235,8 +252,8 @@ function pressAction(a){
     case 'jump': P.jumpQueued=true; break;
     case 'interact': interact(); break;
     case 'reload': Arsenal.reload(); break;
-    case 'firearm': if (alive) Arsenal.equip(Arsenal.firearm); break;
-    case 'knife': if (alive) Arsenal.equip('knife'); break;
+    case 'firearm': if (alive) Arsenal.swapGun(); break;              // primary <-> secondary
+    case 'knife': if (alive) Arsenal.equip(Arsenal.melee); break;     // knife, or the Taser if equipped
     case 'firemode': Arsenal.toggleFireMode(); break;
     case 'grenade': Equip.throwFlash(); break;
     case 'mine': Equip.placeMine(); break;
@@ -274,14 +291,14 @@ canvas.addEventListener('mousedown',e=>{
 });
 addEventListener('mouseup',e=>{ mouseDown=false; const code='Mouse'+e.button; Input.down[code]=false; actionsFor(code).forEach(releaseAction); });
 addEventListener('contextmenu',e=>e.preventDefault());
-addEventListener('wheel',e=>{ if (Game.state==='playing' && locked() && P.alive) Arsenal.cycle(); },{passive:true});
+addEventListener('wheel',e=>{ if (Game.state==='playing' && locked() && P.alive) Arsenal.cycle(e.deltaY<0?-1:1); },{passive:true});
 addEventListener('mousemove',e=>{
   if (Game.state!=='playing') return;
   if (document.pointerLockElement!==canvas && !(dragLook && mouseDown)) return;
   if (performance.now()<lookMuteUntil) return;                                        // just after a lock / fullscreen change
   if (Math.abs(e.movementX)>400 || Math.abs(e.movementY)>400) return;                 // bogus jump (Chrome/ChromeOS bug)
   // sensitivity scales with the zoom (FOV narrows by the same factor), so the view moves at the same angular rate on screen
-  const k=0.0022*Settings.sens*lerp(1, Arsenal.def.adsZoom||1, Arsenal.adsK)*AimAssist.slow;   // aim assist friction while on a target
+  const k=0.0022*Settings.sens*lerp(1, Arsenal.def.adsZoom||1, Arsenal.adsK)*AimAssist.slow; AimAssist.lastLook=performance.now();   // aim assist friction while on a target
   P.yaw -= e.movementX*k; P.pitch = clamp(P.pitch - e.movementY*k, -1.5, 1.5);
   VM.addLook(e.movementX, e.movementY);
 });
@@ -298,6 +315,7 @@ addEventListener('keydown',e=>{
    - "Leave site?" confirmation when the tab is about to close (Ctrl+W, Ctrl+Q, closing the window) while in a match or room;
    - in fullscreen the game keys are locked to the game (Keyboard Lock), so Ctrl+W / Ctrl+Q / Ctrl+T / Ctrl+N / Ctrl+R
      go to the game instead of the browser. Esc is left alone so it still leaves fullscreen. */
+addEventListener('pagehide',()=>{ try { ProfileAuthority.leaveMatch(); } catch(e){} });   // closing the tab mid-match: earnings are already saved; record the match
 addEventListener('beforeunload',e=>{
   const busy = ['playing','pause','qload','end'].includes(Game.state) || (typeof Net!=='undefined' && (Net.inMatch || Net.room)) || (Game.state==='settings' && UI.settingsReturn==='pause');
   if (busy){ e.preventDefault(); e.returnValue=''; return ''; }
@@ -398,19 +416,21 @@ const AimLock = {
   },
 };
 
-/* Aim assist (Settings → Controls: Off / On, on by default). Slight, and it never aims for you: it does NOT pull,
-   snap or lock on, not even while aiming in. It only slows your mouse a little while your crosshair is already right
-   on someone (within about 3°), so it is easier to stay on target. None for the sniper, none for teammates.
-   Developer aim lock (dev menu) and the knife are separate. */
+/* Aim assist (Settings → Controls: Off / On, on by default). Slight, and it never aims for you: it does NOT snap or
+   lock on, not even while aiming in. Two parts, both only while your crosshair is already on someone in clear sight
+   (within about 3.5°): (1) your mouse slows a little, and (2) while you are actively aiming / moving / shooting, the
+   view follows a share (30%) of the target's sideways movement, rate-limited, so a moving opponent is easier to
+   stay on. You still have to do the other 70% and all of the initial aiming. It stays with one target until you
+   leave it. None for the sniper, none for teammates, none through walls. Developer aim lock and the knife are separate. */
 const AimAssist = {
   cur:null, slow:1,
-  CFG:{ on:{cone:0.05, keep:0.075, slow:0.78} },
+  CFG:{ on:{cone:0.06, keep:0.095, slow:0.72, track:0.3, trackMax:0.45, trackDist:60} },   // was cone 0.05 / keep 0.075 / slow 0.78, no tracking
   angleTo(t, eye, fwd){ let best=9, bp=null;
     for (const p of [chestOf(t), AimLock.point(t,true)]){ const d=p.clone().sub(eye), L=d.length(); if (L<0.5 || L>180) continue; const a=Math.acos(clamp(d.dot(fwd)/L,-1,1)); if (a<best){ best=a; bp=p; } }
     return {a:best, p:bp}; },
   update(dt){
-    this.slow=1; const C=this.CFG[Settings.aimAssist];
-    if (!C || (Dev.enabled && Dev.aim!=='off') || Game.state!=='playing' || !P.alive || Arsenal.cur==='knife' || Arsenal.cur==='sniper' || P.inCar){ this.cur=null; return; }
+    this.slow=1; const C=this.CFG[Settings.aimAssist], was=this.cur, prev=this.prev; this.prev=null;
+    if (!C || (Dev.enabled && Dev.aim!=='off') || Game.state!=='playing' || !P.alive || P.stunT>0 || Arsenal.cur==='knife' || Arsenal.cur==='sniper' || P.inCar){ this.cur=null; return; }
     const eye=camera.position, fwd=new V3(-Math.sin(P.yaw)*Math.cos(P.pitch), Math.sin(P.pitch), -Math.cos(P.yaw)*Math.cos(P.pitch));
     if (this.cur){ const r=this.angleTo(this.cur, eye, fwd); if (!this.cur.alive || !r.p || r.a>C.keep || !lineOfSight(eye, r.p)) this.cur=null; }
     if (!this.cur){
@@ -418,7 +438,12 @@ const AimAssist = {
       let hit=null; for (const t of list){ if (!isEnemy(t)) continue; const r=this.angleTo(t, eye, fwd); if (r.p && r.a<C.cone && (!hit || r.a<hit.a) && lineOfSight(eye, r.p)) hit={t, ...r}; }
       if (!hit) return; this.cur=hit.t;
     }
-    this.slow=C.slow;      // friction only: no pull, no snap
+    this.slow=C.slow;      // friction
+    // tracking share: follow part of how far the target's bearing moved since the last frame (never towards a new target)
+    const tp=chestOf(this.cur), d=tp.sub(eye), dist=d.length(), yawT=Math.atan2(-d.x,-d.z), pitchT=Math.atan2(d.y, Math.hypot(d.x,d.z)); this.prev={yaw:yawT, pitch:pitchT};
+    const active=Arsenal.trigger || Arsenal.ads || performance.now()-(this.lastLook||0)<300 || Input.down[Binds.left] || Input.down[Binds.right] || Input.down[Binds.forward] || Input.down[Binds.back];
+    if (prev && was===this.cur && active && dist<C.trackDist){ const lim=C.trackMax*dt;
+      P.yaw+=clamp(angleDiff(yawT,prev.yaw)*C.track,-lim,lim); P.pitch=clamp(P.pitch+clamp((pitchT-prev.pitch)*C.track*0.6,-lim,lim),-1.5,1.5); }
   },
 };
 
@@ -444,6 +469,7 @@ const KnifeLock = {
   },
 };
 // teams (Gang Wars): bots / players on your own gang are never targeted by assists or lock-ons
+function canHit(t){ return isEnemy(t) || !!(Net.inMatch && Net.settings && Net.settings.friendlyFire); }   // friendly fire: teammates can be hit, but are never auto-targeted
 function isEnemy(t){ return !(typeof Net!=='undefined' && Net.inMatch && Net.myTeam!=null && Net.teamOf(t)===Net.myTeam); }
 
 // ---------- Main loop ----------
@@ -454,13 +480,14 @@ function loop(now){
   if (cap>0 && now-last < 1000/cap - 1.5) return;      // FPS limiter
   const dt=Math.min(0.05,(now-last)/1000), rdt=Math.min(0.25,Math.max(0,(now-last)/1000)); last=now;   // rdt: real time, for timers that must be exact on slow frames
   const st=Game.state, inGame = st==='playing' || st==='pause' || st==='end' || st==='qload' || (st==='settings' && UI.settingsReturn==='pause');
-  Ambience.update(dt, !inGame); Snd.updateListener(); DynRes.update(rdt); SimpleMat.update(rdt); showLockHint(); if (inGame) Snd.updateSpace(dt);
+  Ambience.update(dt, !inGame); Snd.updateListener(); DynRes.update(rdt); AutoQuality.update(rdt); SimpleMat.update(rdt); showLockHint(); if (inGame) Snd.updateSpace(dt);
   // the Armory / character screens always render their own isolated preview scene (never the game world), even when opened from a match
   if (inGame){
     if (Menu.on) Menu.hide();
     if (st==='playing'){
       Env.update(dt, camera);
       if (P.alive && !P.inCar && !P.riding){ const n=Math.ceil(dt/0.0167); for (let i=0;i<n;i++) stepPlayer(dt/n); }
+      { const bw=innerWidth*renderer.getPixelRatio(), k=Math.max(1/bw, 1.25/innerWidth)*2; OutlinePx.value.set(k, k*camera.aspect); }
       AimLock.update(dt); AimAssist.update(dt); KnifeLock.update(dt); Rides.update(dt); Net.update(dt);
       updateLean(dt); updateSearch(dt); updateSmoking(rdt); updateUsing(rdt); Effects.update(rdt); footsteps(dt);
       updateHealth(dt);
@@ -484,10 +511,10 @@ function loop(now){
     if (blur>0.01) Post.end(blur); else if (Post.enabled()){ Post.ensure(); }
     UI.updateHUD(dt);
   } else if (st==='char' || st==='loadout'){
-    Stage.update(dt); renderer.setRenderTarget(null); renderer.clear(); Stage.render(renderer);
+    Stage.update(dt); renderer.setRenderTarget(null); Stage.render(renderer);
   } else {
     if (Game.state==='loading') return;      // assets still decoding
-    if (Net.connected && !Net.inMatch){ Net._loT=(Net._loT||0)+dt; if (Net._loT>1){ Net._loT=0; Net.syncLoadout(); } }
+    if (Net.connected && !Net.inMatch){ Net._loT=(Net._loT||0)+dt; if (Net._loT>1){ Net._loT=0; Net.syncLoadout(); Net.syncPrefs(); } }
     Menu.update(dt);
     renderer.setRenderTarget(null); renderer.clear();
     renderer.render(scene,camera);
@@ -513,17 +540,24 @@ setTimeout(()=>{
     es.add(new THREE.Mesh(new THREE.SphereGeometry(10,16,8), new THREE.MeshBasicMaterial({map:gt, side:THREE.BackSide})));
     const sb=new THREE.Mesh(new THREE.PlaneGeometry(6,3), new THREE.MeshBasicMaterial({color:'#ffffff', side:THREE.DoubleSide})); sb.position.set(0,6,-4); sb.lookAt(0,0,0); es.add(sb);
     const env=pm.fromScene(es,0.04).texture; scene.environment=env; VM.scene.environment=env; Stage.scene.environment=env; pm.dispose(); }
-  Promise.all([loadAssets(), loadCharacterAsset(), loadBluntAsset(), loadNicAsset(), Rides.load(), OuterModels.load(scene)]).then(()=>{
+  // Staged loading: the menu needs only the guns, your character and the sounds. The vehicles, the outer buildings and
+  // the other characters (about 5 MB) are fetched in the background while the menu is already on screen.
+  Promise.all([loadAssets(), loadCharacterAsset([...new Set(['tracksuit', CHARACTERS[CharLook.char]?CharLook.char:'tracksuit'])]), loadBluntAsset()]).then(()=>{
     ProfileAuthority.load(); Dev.init();
     Mode.init();
     Bots.init();
-    Rides.init(scene);
     Arsenal.reset();
     Game.applyCharacter();
     UI.init();
     Game.applyGfx();
     Rig.mode=Settings.camMode;
     Game.state='main'; Game.go('main');
+    { const nav=$('#mainnav'), note=el('div','loadnote','Loading the rest of the game…'); nav.classList.add('busy'); nav.parentNode.insertBefore(note, nav);
+      const T0=performance.now();
+      (async()=>{ for (const f of ['assets/outer.js','assets/scooter.js','assets/ebike.js','assets/nic.js']) await loadScript(f);
+        await Promise.all([Rides.load(), OuterModels.load(scene), loadNicAsset(), loadCharacterAsset()]); Rides.init(scene); for (const b of Bots.list) if (b.reroll) b.reroll(true); })()   // bots can now wear every character
+        .then(()=>{ window.__loadMs=Math.round(performance.now()-T0); nav.classList.remove('busy'); note.remove(); })
+        .catch(e=>{ note.textContent='Could not load some game files ('+e+'). Check your connection and reload.'; note.classList.add('warn'); console.error(e); }); }
     loadMusic();
     // browsers only allow audio after a click: start menu music on the first interaction
     const kick=()=>{ Snd.init(); if (Game.state!=='playing') Snd.playMusic('song_menu'); removeEventListener('pointerdown',kick,true); removeEventListener('keydown',kick,true); };

@@ -44,7 +44,7 @@ const Stage = {
     this.tYaw=this.yaw=0.5; this.tPitch=this.pitch=0.08; this.tDist=this.dist=5.2; this.autoRot=true; this.idleT=0; this.viewBtn('auto');
   },
   showWeapon(id){
-    this.mode='weapon'; this.clear(); this.plat.visible=this.ring.visible=false;
+    this.mode='weapon'; this.clear(); this.touch(); this.plat.visible=this.ring.visible=false;
     const w=createWeapon(id); this.weapon=w;
     const g=new THREE.Group(); g.add(w.model); this.holder.add(g);
     // fit using the stock silhouette so attachments don't shift the framing
@@ -95,10 +95,18 @@ const Stage = {
     else { const d=this.dist*(this.fitK||1), cp=Math.cos(this.pitch); this.cam.position.set(Math.sin(this.yaw)*cp*d, Math.sin(this.pitch)*d, Math.cos(this.yaw)*cp*d); this.cam.lookAt(0,0,0); this.holder.rotation.y=0; }
   },
   // centre the preview in the middle column
+  // idle frames are skipped: a settled weapon preview is not redrawn (the canvas keeps the last frame), and the column's
+  // layout is measured only when the screen / window / list changes, not every frame (that forced a page reflow per frame)
+  touch(){ this.dirty=2; this._R=null; },
   render(r){
-    const mid=document.querySelector('#scr-'+Game.state+' .col.mid'), W=innerWidth, H=innerHeight;
+    const W=innerWidth, H=innerHeight, key=Game.state+W+'x'+H;
+    const moving=Math.abs(this.tYaw-this.yaw)+Math.abs(this.tPitch-this.pitch)+Math.abs(this.tDist-this.dist)>1e-4 || this.anims.length || this.drag || this.mode==='char';
+    if (key!==this._key){ this._key=key; this.touch(); }
+    if (!moving && !(this.dirty>0)) return false; this.dirty=Math.max(0,(this.dirty|0)-1);
+    if (!this._R){ const mid=document.querySelector('#scr-'+Game.state+' .col.mid'); this._R=mid?mid.getBoundingClientRect():'none'; }
+    const R=this._R==='none'?null:this._R;
     this.cam.aspect=W/H;
-    if (mid){ const R=mid.getBoundingClientRect(); let cy=R.top+R.height/2;
+    if (R){ let cy=R.top+R.height/2;
       if (this.mode==='weapon'){
         // fit the weapon into the free area between the title block and the view buttons / stats panel
         const top=R.top+125, bot=R.bottom-255; cy=(top+bot)/2;
@@ -107,7 +115,7 @@ const Stage = {
       }
       this.cam.setViewOffset(W,H,W/2-(R.left+R.width/2),H/2-cy,W,H); }
     else this.cam.clearViewOffset();
-    this.cam.updateProjectionMatrix(); r.render(this.scene,this.cam);
+    this.cam.updateProjectionMatrix(); r.clear(); r.render(this.scene,this.cam); return true;
   },
 };
 
@@ -156,6 +164,7 @@ const UI = {
     document.addEventListener('click',e=>{ const b=e.target.closest&&e.target.closest('button'); if (b && Game.state!=='playing'){ Snd.init(); const k=uiSoundFor(b); if (k) Snd.uiSfx(k); } }, true);
     $('#btn-play').onclick=()=>this.brief('dm');
     document.querySelectorAll('#char-views button').forEach(b=>b.onclick=()=>Stage.charView(b.dataset.v));
+    $('#btn-hist').onclick=()=>{ const g=$('#hist'), on=!g.classList.contains('on'); if (on) this.renderHistory(); g.classList.toggle('on',on); $('#btn-hist').classList.toggle('on',on); };
     $('#btn-guide').onclick=()=>{ const g=$('#guide'), on=!g.classList.contains('on'); g.classList.toggle('on',on); $('#btn-guide').classList.toggle('on',on); };
     $('#btn-backpack').onclick=()=>this.brief('backpack');
     $('#btn-online').onclick=()=>{ Game.go('online'); Lobby.open(); };
@@ -184,7 +193,7 @@ const UI = {
     $('#end-again').onclick=()=>{ if (Net.inMatch){ Game.toMenu(); return; } Game.startMatch(Mode.cur); };
     $('#end-menu').onclick=()=>Game.toMenu();
     $('#ql-close').onclick=()=>Game.go('pause');
-    $('#ql-apply').onclick=()=>{ Loadout.firearm=this.qlPick||Loadout.firearm; saveLoadout(); Arsenal.setFirearm(Mode.allowedFirearm(Loadout.firearm)); this.toast('LOADOUT UPDATED','ok'); Game.resume(); };
+    $('#ql-apply').onclick=()=>{ const q=this.qlPick||{}; Loadout.firearm=q.primary||Loadout.firearm; Loadout.secondary=q.secondary||Loadout.secondary; Loadout.melee=q.melee||Loadout.melee; saveLoadout(); for (const w of [q.melee,q.secondary,q.primary]) if (w && w!==Arsenal[WEAPON_SLOT[w]]) Arsenal.setFirearm(w); this.toast('LOADOUT UPDATED','ok'); Game.resume(); };
     this.initLoadout(); this.buildChar(); this.camButtons(); this.menuInfo();
     Bus.on('kill',k=>{ this.killfeed(`<b>YOU</b> <span>[${k.weapon}${k.head?' · HEADSHOT':''}]</span> <em>${k.victim}</em>`); this.toast((k.head?'HEADSHOT · ':'')+'ELIMINATED '+k.victim,'kill'); });
     Bus.on('killfeed',k=>this.killfeed(`<em>${k.killer}</em> <span>[${k.weapon}]</span> ${k.victim==='YOU'?'<b>YOU</b>':'<em>'+k.victim+'</em>'}`));
@@ -197,9 +206,10 @@ const UI = {
     Bus.on('firemode',a=>this.toast(a?'GLOCK · SWITCH (FULL AUTO)':'GLOCK · SEMI-AUTO','warn'));
     Bus.on('cammode',()=>this.camButtons());
     Bus.on('loot',l=>{ const f=l.found||[]; if (!f.length){ this.toast('NOTHING IN THIS TRUNK',''); return; }
-      const nm={beer:'BEER',blunt:'BLUNT',zyn:'ZYN',ammo:'AMMO'}; const got=f.filter(x=>!x.endsWith('-full')).map(x=>nm[x]), full=f.filter(x=>x.endsWith('-full')).map(x=>nm[x.slice(0,-5)]);
+      const nm=x=>{ const [k,w,n]=x.split(':'); return k==='ammo' ? (n?'+'+n+' ':'')+WEAPON_DEFS[w].name+' AMMO' : ({beer:'BEER',blunt:'BLUNT',zyn:'ZYN'})[k]; };
+      const got=f.filter(x=>!x.endsWith('-full')).map(nm), full=f.filter(x=>x.endsWith('-full')).map(x=>nm(x.slice(0,-5)));
+      if (f.some(x=>x.startsWith('ammo:')&&!x.endsWith('-full'))) Snd.click(0,1800,0.25);
       if (got.length) this.toast('FOUND '+got.join(' + '),'ok'); if (full.length) this.toast(full.join(', ')+' FULL',''); });
-    Bus.on('carhop',n=>this.toast(n>0?'FOUND '+fmtCash(n)+' IN THE CAR':'NOTHING IN THIS CAR', n>0?'ok':''));
     Bus.on('xp',e=>this.xpPop('+'+e.n+' XP'+(e.why?' · '+e.why:''),'')); Bus.on('cash',e=>this.xpPop('+'+fmtCash(e.n),'c'));
     Bus.on('levelup',l=>{ this.levelBanner('LEVEL '+l, 'LEVEL UP'); Snd.levelUp&&Snd.levelUp(); });
     Bus.on('profile',()=>{ this.menuInfo(); });
@@ -209,6 +219,12 @@ const UI = {
   },
   camButtons(){ const t=Rig.mode==='first'?'1ST PERSON':'3RD PERSON'; $('#camBtn').textContent='CAMERA · '+t; $('#btn-pcam').textContent='CAMERA: '+t; },
   // ----- main menu: control guide (from the live bindings) + player information -----
+  // recent matches: what each match paid (online: kept by the server; offline: kept on this device)
+  renderHistory(){
+    const H=ProfileAuthority.recent(), mode={dm:'Deathmatch', gang:'Gang Wars', backpack:'Fight for Za'}, d=t=>new Date(t).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'});
+    $('#hist').innerHTML='<h3>Recent matches'+(ProfileAuthority.s.remote?' · online':' · this device')+'</h3>'+(H.length ? '<table><tr><th>When</th><th>Mode</th><th>Result</th><th>Kills</th><th>Cash</th><th>XP</th><th>Levels</th></tr>'+
+      H.map(h=>`<tr><td>${d(h.at)}</td><td>${mode[h.mode]||h.mode}${h.diff?' · '+h.diff:''}</td><td>${h.result}</td><td>${h.kills||0}</td><td class="c">+${fmtCash(h.cash||0)}</td><td>+${h.xp||0}</td><td>${h.levels?'+'+h.levels:'—'}</td></tr>`).join('')+'</table>' : '<p class="hint">No matches yet.</p>');
+  },
   menuInfo(){
     { const sm=document.querySelector('#btn-play .rules'); if (sm) sm.textContent=rulesText(); }
     const K=c=>`<kbd>${Input.label(c)}</kbd>`;
@@ -236,7 +252,7 @@ const UI = {
       <ul>${dm?'<li>Most kills wins. Set the kill limit and time limit below — whichever is reached first ends the match.</li><li>Respawn at the 15 safe spawn points away from enemies.</li>':(ZARules.variant==='classic'?'<li>Hold the bag for <b>'+ZARules.classicHold+' uninterrupted seconds</b>.</li>':'<li>Every second you carry the bag adds to your <b>hold time</b>. When the clock runs out, the longest total hold wins.</li>')+'<li>If the carrier dies the bag drops where they fell.</li><li>The HUD shows the timer, the carrier, everyone\'s hold time, the leader and where the bag is.</li>'}</ul>
       <h3>Rules</h3><ul>${dm?'<li>Your saved loadout: '+WEAPON_DEFS[Arsenal.usable(Loadout.firearm)].name+' + knife.</li><li>Glock Switch allowed (if you own it).</li>':'<li><b>Glock only</b>, <b>no Switch mode</b> — enforced by the match authority.</li><li>The carrier is marked on everyone\'s minimap.</li>'}</ul>
       <h3>Match settings <small>(you are the host · locked once the match starts)</small></h3><div id="${dm?'dm-setup':'za-setup'}"></div>
-      <div class="mm">This is an offline match against labelled bots. To play with friends, use PRIVATE MATCH · ONLINE (needs the O-Block server).</div>
+      <div class="mm">This is an offline match against labelled bots. To play with friends, use PRIVATE MATCH · ONLINE (needs the O-Blick server).</div>
       <div class="btns"><button id="br-cancel">CANCEL</button><button id="br-start" class="primary">START MATCH</button></div>`;
     b.style.display='block';
     if (dm) this.buildDmSetup(); else this.buildZaSetup();
@@ -258,7 +274,7 @@ const UI = {
     row('Time limit',[[5,'5m'],[10,'10m'],[15,'15m'],[20,'20m'],[30,'30m'],[0,'∞']],'time',60,{max:180});
     row('Kill limit',[[5,'5'],[10,'10'],[15,'15'],[20,'20'],[25,'25'],[30,'30'],[50,'50'],[0,'∞']],'kills',1,{max:500});
     row('Bots',[[0,'0'],[3,'3'],[5,'5'],[7,'7'],[9,'9'],[12,'12']],'bots',1,null);
-    row('Bot difficulty',[['easy','Easy'],['normal','Normal'],['hard','Hard']],'difficulty',1,null);
+    row('Bot difficulty',[['easy','Easy 0.5×'],['normal','Normal 1×'],['hard','Hard 1.5×'],['expert','Expert 2×']],'difficulty',1,null);
     row('Tie on time-out',[['tie','Draw'],['deaths','Fewest deaths wins']],'tie',1,null);
     const sm=$('#btn-play .rules'); if (sm) sm.textContent=rulesText();
     box.appendChild(el('p','hint','Selected: '+rulesText()+' · '+R.bots+' bots · '+R.difficulty+(R.time===0&&R.kills===0?' · practice (no end condition)':'')));
@@ -273,7 +289,7 @@ const UI = {
     if (R.variant==='hold') row('Match length',[[3,'3m'],[5,'5m'],[8,'8m'],[10,'10m'],[15,'15m']],'time',60);
     else row('Hold needed',[[20,'20 s'],[30,'30 s'],[45,'45 s'],[60,'60 s']],'classicHold');
     row('Bots',[[0,'0'],[3,'3'],[5,'5'],[7,'7'],[9,'9'],[12,'12']],'bots');
-    row('Bot difficulty',[['easy','Easy'],['normal','Normal'],['hard','Hard']],'difficulty');
+    row('Bot difficulty',[['easy','Easy 0.5×'],['normal','Normal 1×'],['hard','Hard 1.5×'],['expert','Expert 2×']],'difficulty');
     row('Spawns',[['all','All 15 points'],['far','Far from the bag']],'spawns');
     row('Dropped bag',[['drop','Stays where it fell'],['reset','Respawns after '+R.resetAfter+' s']],'respawn');
     
@@ -294,7 +310,7 @@ const UI = {
       <dt>Ability · ${Input.label(Binds.ability)}</dt><dd>${AB?'<b style="color:#ff6a5a">'+AB.name+'</b> — '+(AB.hpMul?'max health ×'+AB.hpMul:'firearm and melee damage ×'+AB.dmgMul)+' until you die':'None'}</dd>
       ${AB?`<dt>Unlock</dt><dd>${AB.at}-kill streak (kills in a row without dying), then press ${Input.label(Binds.ability)} to activate. Dying resets the streak.</dd>`:''}</dl>
       ${own?'':`<div class="buybox"><b>BUY ${C.name} · ${fmtCash(C.price)}</b><p>You have ${ProfileAuthority.cash===Infinity?'unlimited cash':fmtCash(ProfileAuthority.cash)}. Ownership is saved to your profile.</p><button id="char-buy" class="primary">BUY</button></div>`}`;
-    const cb=$('#char-buy'); if (cb) cb.onclick=()=>{ const r=ProfileAuthority.buy(CharLook.char); if (r.ok){ this.toast(C.name+' UNLOCKED','ok'); Snd.uiSfx('buy'); } else { this.toast('CAN\'T BUY: '+r.why.toUpperCase(),'warn'); Snd.uiSfx('deny'); } this.buildChar(); };
+    const cb=$('#char-buy'); if (cb) cb.onclick=()=>this.buyItem(CharLook.char, C.name, ()=>this.buildChar());
     const box=$('#char-opts'); box.innerHTML='';
     for (const [key,label,list] of [['jacket','Jacket colour',JACKET_COLORS],['pants','Pants colour',PANTS_COLORS]]){
       const grp=el('div','opt'); grp.appendChild(el('label','',label)); const chips=el('div','chips');
@@ -325,7 +341,7 @@ const UI = {
   revertCustom(){ for (const id of WEAPON_ORDER){ Object.assign(WCustom[id].att, JSON.parse(JSON.stringify(WCustomSaved[id].att))); Object.assign(WCustom[id].paint, JSON.parse(JSON.stringify(WCustomSaved[id].paint))); }
     Object.assign(Loadout, DEFAULT_LOADOUT, Store.get('loadout2',{})); Game.refreshWeapons(); },
   loStatus(t){ $('#lo-status').textContent=t; clearTimeout(this._lst); this._lst=setTimeout(()=>{ $('#lo-status').textContent=this.loDirty()?'Unsaved changes':''; },2500); },
-  openLoadout(){ if (!this.thumbs) this.makeThumbs(); this.lo.sel=Loadout.firearm; this.lo.slot=null; this.lo.pick=null; Stage.showWeapon(this.lo.sel); this.renderLoadout(); },
+  openLoadout(){ if (!this.thumbs) this.makeThumbs(); this.lo.sel=Loadout.firearm; this.lo.cat='primary'; this.lo.slot=null; this.lo.pick=null; Stage.showWeapon(this.lo.sel); this.renderLoadout(); },
   // small renders of each weapon for the list
   makeThumbs(){
     this.thumbs={}; const r=renderer, rt=new THREE.WebGLRenderTarget(256,144), sc=new THREE.Scene(); sc.add(new THREE.HemisphereLight('#fff','#666',1.5)); const dl=new THREE.DirectionalLight('#fff',1.3); dl.position.set(1,2,2); sc.add(dl); sc.environment=Stage.scene.environment;
@@ -350,39 +366,47 @@ const UI = {
     } else if (w && w.id===id){ applyWeaponConfig(w); } else Stage.showWeapon(id);
     this.renderLoadout();
   },
+  equipped(w){ const sl=WEAPON_SLOT[w]; return sl==='primary'?Loadout.firearm===w:sl==='secondary'?Loadout.secondary===w:Loadout.melee===w; },
+  equipSlot(w){ const sl=WEAPON_SLOT[w]; if (sl==='primary') Loadout.firearm=w; else if (sl==='secondary') Loadout.secondary=w; else Loadout.melee=w; },
   renderLoadout(){
-    const L=this.lo, id=L.sel;
-    // ---- left: weapons
+    Stage.touch(); const L=this.lo, id=L.sel;
+    // ---- left: PRIMARY / SECONDARY / EQUIPMENT tabs (one primary, one secondary, one melee: knife by default or the Taser)
+    const CAT={primary:PRIMARIES, secondary:SECONDARIES.concat('taser'), equip:['knife']}, catOf=w=>w==='knife'?'equip':PRIMARIES.includes(w)?'primary':'secondary';
+    if (!CAT[L.cat]) L.cat=catOf(id);
+    const ct=$('#lo-cats'); ct.innerHTML=''; for (const [k,t] of [['primary','PRIMARY'],['secondary','SECONDARY'],['equip','EQUIPMENT']]){ const b=el('button',L.cat===k?'on':'',t); b.onclick=()=>{ L.cat=k; const w=CAT[k].find(x=>this.equipped(x))||CAT[k][0]; L.sel=w; L.slot=null; L.pick=null; Stage.showWeapon(w); this.renderLoadout(); }; ct.appendChild(b); }
     const list=$('#lo-weapons'); list.innerHTML='';
-    for (const wid of WEAPON_ORDER){
-      const isFire=wid!=='knife', eq = isFire ? Loadout.firearm===wid : true, n=attachmentCount(wid), ok=ProfileAuthority.canUse(wid), pr=ProfileAuthority.price(wid);
-      const b=el('button','wcard'+(L.sel===wid?' on':'')+(ok?'':' locked'), `<img src="${(this.thumbs||{})[wid]||''}" alt=""><div><b>${WEAPON_DEFS[wid].name}</b><small>${WEAPON_CATEGORY[wid]}${isFire?' · '+n+' attachment'+(n===1?'':'s'):''}${isFire&&!ok&&pr?' · '+fmtCash(pr):''}</small><span class="eq ${eq&&ok?'':'no'}">${!ok?'LOCKED · BUY FOR '+fmtCash(pr):isFire?(eq?'EQUIPPED FIREARM':'NOT EQUIPPED'):'ALWAYS CARRIED'}</span></div>`);
+    for (const wid of CAT[L.cat]){
+      const eq=this.equipped(wid), n=attachmentCount(wid), ok=ProfileAuthority.canUse(wid), pr=ProfileAuthority.price(wid), hasAtt=WEAPON_SLOTS[wid].length>0;
+      const tag=!ok?'LOCKED · '+fmtCash(pr):eq?'EQUIPPED':wid==='knife'?'DEFAULT MELEE':'OWNED';
+      const b=el('button','wcard'+(L.sel===wid?' on':'')+(ok?'':' locked'), `<img src="${(this.thumbs||{})[wid]||''}" alt=""><div><b>${WEAPON_DEFS[wid].name}</b><small>${WEAPON_CATEGORY[wid]}${hasAtt?' · '+n+' attachment'+(n===1?'':'s'):''}</small><span class="eq ${eq&&ok?'':'no'}">${tag}</span></div>`);
       b.onclick=()=>{ L.sel=wid; L.slot=null; L.pick=null; Stage.showWeapon(wid); this.renderLoadout(); };
       list.appendChild(b);
     }
-    // equipment budget
-    const eqb=$('#lo-equip'); eqb.innerHTML='<h3>Equipment · '+EQUIP_BUDGET+' total</h3>';
+    // equipment budget (EQUIPMENT tab)
+    const eqb=$('#lo-equip'); eqb.innerHTML=''; eqb.style.display=L.cat==='equip'?'':'none';
+    if (L.cat==='equip'){ eqb.innerHTML='<h3>Throwables · '+EQUIP_BUDGET+' total</h3>';
     for (const [k,label,act] of [['flash','Flash grenades','grenade'],['mine','Landmines','mine']]){
       const r=el('div','srow'); r.appendChild(el('label','',label+'<small>'+Input.label(Binds[act])+'</small>'));
       const s=el('div','seg'), other=k==='flash'?'mine':'flash';
       for (let n=0;n<=EQUIP_BUDGET;n++){ const bb=el('button',Loadout[k]===n?'on':'',String(n)); bb.disabled=n+Loadout[other]>EQUIP_BUDGET; bb.onclick=()=>{ Loadout[k]=n; this.loStatus('Unsaved changes'); this.renderLoadout(); }; s.appendChild(bb); }
       r.appendChild(s); eqb.appendChild(r);
-    }
+    } }
     // ---- centre header
     const isFire=id!=='knife';
     const okW=ProfileAuthority.canUse(id), prW=ProfileAuthority.price(id), haveC=ProfileAuthority.cash;
+    const slotName={primary:'PRIMARY',secondary:'SECONDARY',melee:'MELEE'}[WEAPON_SLOT[id]], eqd=this.equipped(id);
     $('#lo-head').innerHTML=`<div class="wn">${WEAPON_DEFS[id].name}${okW?'':' <span class="lock">'+fmtCash(prW)+'</span>'}</div><div class="wc">${WEAPON_CATEGORY[id]}</div>`+
-      (isFire ? (!okW ? `<button class="toggle primary" id="lo-buyw" data-sfx="none">BUY ${WEAPON_DEFS[id].name.toUpperCase()} · ${fmtCash(prW)} (YOU HAVE ${haveC===Infinity?'∞':fmtCash(haveC)})</button>` : Loadout.firearm===id ? '<button class="toggle on" disabled>✓ EQUIPPED FIREARM</button>' : '<button class="toggle" id="lo-equipbtn">EQUIP AS FIREARM</button>') : '');
+      (!okW ? `<button class="toggle primary" id="lo-buyw" data-sfx="none">BUY ${WEAPON_DEFS[id].name.toUpperCase()} · ${fmtCash(prW)} (YOU HAVE ${haveC===Infinity?'∞':fmtCash(haveC)})</button>` : eqd ? `<button class="toggle on" disabled>✓ EQUIPPED ${slotName}</button>` : `<button class="toggle" id="lo-equipbtn">EQUIP AS ${slotName}</button>`);
     let swBox='';
     if (id==='glock'){ const own=ProfileAuthority.owns('switch');
       swBox=(own ? `<div class="buybox"><b>GLOCK SWITCH · OWNED</b><p>Full auto (${GLOCK_SWITCH_RPM} rpm) with 15% less accuracy. Toggle in a match with ${Input.label(Binds.firemode)}.</p></div>`
         : `<div class="buybox"><b>GLOCK SWITCH · ${fmtCash(PROG.price.switch)}</b><p>Full auto (${GLOCK_SWITCH_RPM} rpm), 15% less accuracy. You have ${ProfileAuthority.cash===Infinity?'unlimited cash':fmtCash(ProfileAuthority.cash)}.</p><button class="primary" id="lo-buysw">BUY SWITCH</button></div>`); }
-    { const bw=$('#lo-buyw'); if (bw) bw.onclick=()=>this.buyItem(id, WEAPON_DEFS[id].name, ()=>{ Loadout.firearm=id; this.loStatus(WEAPON_DEFS[id].name+' bought and equipped (not saved yet)'); }); }
-    const eb=$('#lo-equipbtn'); if (eb) eb.onclick=()=>{ if (!ProfileAuthority.canUse(id)) return; Loadout.firearm=id; this.loStatus('Firearm changed (not saved yet)'); this.renderLoadout(); };
+    { const bw=$('#lo-buyw'); if (bw) bw.onclick=()=>this.buyItem(id, WEAPON_DEFS[id].name, ()=>{ this.equipSlot(id); this.loStatus(WEAPON_DEFS[id].name+' bought and equipped (not saved yet)'); }); }
+    const eb=$('#lo-equipbtn'); if (eb) eb.onclick=()=>{ if (!ProfileAuthority.canUse(id)) return; this.equipSlot(id); Snd.install(); this.loStatus(WEAPON_DEFS[id].name+' equipped as '+slotName.toLowerCase()+' (not saved yet)'); this.renderLoadout(); };
     this.renderStats();
     // ---- right: attachments or paint
     const slots=$('#lo-slots'), cards=$('#lo-cards'), det=$('#lo-detail'); slots.innerHTML=swBox; cards.innerHTML=''; det.innerHTML='';
-    { const bs=$('#lo-buysw'); if (bs) bs.onclick=()=>{ const r=ProfileAuthority.buy('switch'); if (r.ok){ this.toast('GLOCK SWITCH UNLOCKED','ok'); Snd.uiSfx('buy'); } else { this.toast('CAN\'T BUY: '+r.why.toUpperCase(),'warn'); Snd.uiSfx('deny'); } this.renderLoadout(); }; }
+    { const bs=$('#lo-buysw'); if (bs) bs.onclick=()=>this.buyItem('switch', 'Glock Switch'); }
     if (L.tab==='paint'){
       for (const p of PAINT[id]){
         const grp=el('div','opt'); grp.appendChild(el('label','',p.label)); const chips=el('div','chips');
@@ -394,7 +418,7 @@ const UI = {
       }
       return;
     }
-    if (!WEAPON_SLOTS[id].length){ slots.appendChild(el('p','hint','The knife has no attachments — open PAINT to customize it.')); return; }
+    if (!WEAPON_SLOTS[id].length){ slots.appendChild(el('p','hint','The '+WEAPON_DEFS[id].name+' has no attachments — open PAINT to customize it.')); return; }
     for (const s of WEAPON_SLOTS[id]){
       const cur=WCustom[id].att[s];
       const b=el('button','slot'+(L.slot===s?' on':''), `<span class="k">${SLOT_LABELS[s]}</span><span class="v">${cur?ATTACHMENTS[cur].name:'None'}</span><span class="ch">›</span>`);
@@ -418,7 +442,19 @@ const UI = {
   },
   // purchases from the loadout (offline: local profile; online: the server checks the price and your cash)
   // purchases install AND save straight away, and every outcome is shown on the Loadout screen
-  buyItem(item, name, then){
+  // purchase confirmation: name, price and the balance after, BUY / CANCEL (Enter / Esc). Nothing is spent until BUY.
+  confirmBuy(name, price, ok){
+    let m=$('#buyconf'); if (!m){ m=el('div',''); m.id='buyconf'; document.body.appendChild(m); }
+    const have=ProfileAuthority.cash, left=have===Infinity?Infinity:have-price, short=left<0;
+    m.innerHTML=`<div class="panel center small"><h3>BUY ${esc(name.toUpperCase())}?</h3><p class="bc-price">${fmtCash(price)}</p>
+      <p class="muted">You have ${have===Infinity?'unlimited cash':fmtCash(have)}${short?' — not enough':' · after: '+(left===Infinity?'∞':fmtCash(left))}</p>
+      <div class="row"><button id="bc-no">CANCEL</button><button id="bc-yes" class="primary"${short?' disabled':''}>BUY</button></div></div>`;
+    m.style.display='flex'; Snd.uiSfx('open');
+    const close=()=>{ m.style.display='none'; removeEventListener('keydown',key,true); }, key=e=>{ if (e.code==='Escape'){ e.stopPropagation(); close(); } else if (e.code==='Enter' && !short){ e.stopPropagation(); close(); ok(); } };
+    addEventListener('keydown',key,true); $('#bc-no').onclick=close; $('#bc-yes').onclick=()=>{ close(); ok(); };
+  },
+  buyItem(item, name, then, confirmed){
+    if (!confirmed){ const pr=ProfileAuthority.price(item); if (pr>0){ this.confirmBuy(name, pr, ()=>this.buyItem(item, name, then, true)); return; } }
     const done=()=>{ if (then) then(); saveLoadout(); saveWCustom(); Game.refreshWeapons(); this.menuInfo(); if (Game.state==='loadout'){ this.renderLoadout(); this.loStatus(name+' bought · saved'); } };
     const r=ProfileAuthority.buy(item);
     if (r.ok){ this.toast(name.toUpperCase()+' BOUGHT','ok'); Snd.uiSfx('buy'); done(); }
@@ -426,6 +462,15 @@ const UI = {
       clearTimeout(this._buyTO); this._buyTO=setTimeout(()=>{ if (this._afterBuy && this._afterBuy.item===item){ this._afterBuy=null; this.buyFailed(name,'no answer from the server · try again'); } }, 6000); }
     else this.buyFailed(name, r.why);
     if (Game.state==='loadout') this.renderLoadout();
+  },
+  // save indicator: only shown around real saves (rewards, purchases); "saved" appears only after the server confirms
+  saveState(st, n){
+    let el=$('#savest'); if (!el){ el=document.createElement('div'); el.id='savest'; document.body.appendChild(el); }
+    clearTimeout(this._saveT);
+    if (st==='pending'){ this._savePend=true; el.className='on'; el.textContent='SAVING…'; this._saveT=setTimeout(()=>{ if (this._savePend){ el.className='on bad'; el.textContent='WAITING FOR THE SERVER TO SAVE…'; } }, 6000); }
+    else if (st==='saved'){ if (!this._savePend && !el.classList.contains('bad')) return; this._savePend=false; el.className='on ok'; el.textContent='✓ PROGRESS SAVED'; this._saveT=setTimeout(()=>{ el.className=''; }, 1600); }
+    else if (st==='failed'){ el.className='on bad'; el.textContent='⚠ PROGRESS NOT SAVED YET · RETRYING ('+n+')'; }
+    else if (st==='offline'){ el.className='on bad'; el.textContent='⚠ DISCONNECTED · REWARDS ALREADY CONFIRMED ARE SAFE'; this._saveT=setTimeout(()=>{ el.className=''; }, 5000); }
   },
   buyFailed(name, why){ this.toast('CAN\'T BUY '+name.toUpperCase()+': '+String(why).toUpperCase(),'warn'); Snd.uiSfx('deny'); if (Game.state==='loadout') this.loStatus('Can\'t buy '+name+': '+why); },
   // gameplay stats used for display (all from weaponStats, the same function gameplay uses)
@@ -465,14 +510,16 @@ const UI = {
   // In-game compact loadout (L)
   // =================================================================
   buildQuick(){
-    const b=$('#ql-body'); b.innerHTML=''; this.qlPick=Arsenal.firearm;
-    b.appendChild(el('p','hint', Mode.cur==='backpack' ? 'THE FIGHT FOR ZA: Glock only, no Switch mode (enforced by the match authority).' : 'Pick your firearm. Attachments come from your saved loadout. Equipment changes apply on your next spawn.'));
-    const draw=()=>{ b.querySelectorAll('.qrow').forEach(x=>x.remove());
-      for (const id of FIREARMS){ const ok=Mode.allowedFirearm(id)===id && ProfileAuthority.canUse(id), cfg=WCustomSaved[id];
-        const sum=WEAPON_SLOTS[id].map(s=>cfg.att[s]).filter(a=>a && a!=='iron' && a!=='mag_std').map(a=>ATTACHMENTS[a].name).join(', ')||'No attachments';
-        const r=el('button','qrow'+(this.qlPick===id?' on':'')+(ok?'':' locked'), `<b>${WEAPON_DEFS[id].name}</b><small>${ProfileAuthority.canUse(id)?sum:'Buy in Loadout · '+fmtCash(ProfileAuthority.price(id))}</small><small>${this.qlPick===id?'SELECTED':Arsenal.firearm===id?'CURRENT':''}</small>`);
-        r.disabled=!ok; r.onclick=()=>{ this.qlPick=id; draw(); }; b.insertBefore(r, b.querySelector('.qknife')); } };
-    b.appendChild(el('div','qrow qknife','<b>KNIFE</b><small>Always available · '+Input.label(Binds.knife)+'</small><small></small>'));
+    const b=$('#ql-body'); b.innerHTML=''; this.qlPick={primary:Arsenal.primary, secondary:Arsenal.secondary, melee:Arsenal.melee};
+    b.appendChild(el('p','hint', Mode.cur==='backpack' ? 'THE FIGHT FOR ZA: Glock only, no Switch mode (enforced by the match authority).' : 'One primary, one secondary and a melee. Attachments come from your saved loadout; equipment changes apply on your next spawn.'));
+    const rows=[['primary','PRIMARY',PRIMARIES],['secondary','SECONDARY',SECONDARIES],['melee','MELEE',MELEES]], box=el('div','qcols'); b.appendChild(box);
+    const draw=()=>{ box.innerHTML='';
+      for (const [k,t,L] of rows){ const col=el('div','qcol'); col.appendChild(el('h4','',t));
+        for (const id of L){ const ok=(k==='melee'?Arsenal.allowed(id):Mode.allowedFirearm(id)===id) && ProfileAuthority.canUse(id), cfg=WCustomSaved[id];
+          const sum=!ProfileAuthority.canUse(id)?'Buy in the Armory · '+fmtCash(ProfileAuthority.price(id)) : WEAPON_SLOTS[id].map(s=>cfg.att[s]).filter(a=>a && a!=='iron' && a!=='mag_std').map(a=>ATTACHMENTS[a].name).join(', ')||(k==='melee'?(id==='taser'?'Stuns for 5 s · 20 m':'Always available'):'No attachments');
+          const on=this.qlPick[k]===id, r=el('button','qrow'+(on?' on':'')+(ok?'':' locked'), `<b>${WEAPON_DEFS[id].name}</b><small>${sum}</small><small>${on?'SELECTED':''}</small>`);
+          r.disabled=!ok; r.onclick=()=>{ this.qlPick[k]=id; draw(); }; col.appendChild(r); }
+        box.appendChild(col); } };
     draw();
   },
   // =================================================================
@@ -499,6 +546,7 @@ const UI = {
       box.appendChild(el('p','hint','Potato is the lowest preset (half resolution, short view, reduced effects). Performance Mode lowers resolution, shortens draw distance, disables shadows, motion blur and light flashes, and animates distant bots less often.'));
       sub('Render resolution','renderScale',[[0,'Preset'],[1,'100%'],[0.75,'75%'],[0.6,'60%'],[0.5,'50%'],[0.4,'40%'],[0.3,'30%']],g);
       sub('Auto resolution','dynRes',[[false,'Off'],[true,'On']],g);
+      sub('Auto quality (lowers graphics under 30 fps)','autoQuality',[[false,'Off'],[true,'On']],g);
       box.appendChild(el('p','hint','Auto resolution lowers the resolution when the frame rate drops and raises it again when there is room (never above the resolution chosen above).'));
       sub('View distance','viewDist',[['auto','Preset'],['far','Far'],['normal','Normal'],['short','Short'],['tiny','Very short']],g);
       sub('Lighting','simpleMat',[[false,'Realistic'],[true,'Simple (fast)']],g);
@@ -534,6 +582,7 @@ const UI = {
     } else {
       slider('Mouse sensitivity','sens',0.2,3,0.05,v=>v.toFixed(2)+'×');
       seg('Aim assist','aimAssist',[['off','Off'],['on','On']]);
+      seg('Player outlines','outlines',[['off','Off'],['on','On']]);
       box.appendChild(el('p','hint','Slight: when your crosshair is already on someone it slows your mouse a little so it is easier to stay on them. It never moves your aim or locks on. Not used with the sniper.'));
       seg('Lean (Q / E)','leanMode',[['hold','Hold'],['toggle','Toggle']]);
       seg('Crouch','crouchMode',[['hold','Hold'],['toggle','Toggle']],()=>{ P.crouchToggle=false; });
@@ -668,7 +717,9 @@ const UI = {
     $('#status').innerHTML=st.map(s=>`<i class="${s[1]}">${s[0]}</i>`).join('');
     $('#wname').innerHTML=d.name+(A.cur==='glock'?` <span class="mode ${A.glockAuto?'auto':''}">${A.glockAuto?'SWITCH · AUTO':'SEMI'}</span>`:'');
     $('#ammo').innerHTML = a ? `<b class="${a.mag===0?'empty':a.mag<=Math.ceil(d.mag*0.25)?'low':''}">${a.mag}</b><span>/ ${a.res}</span>` : '<b>—</b>';
-    $('#slots').innerHTML = `<i class="${A.cur!=='knife'?'on':''}">${Input.label(Binds.firearm)} ${WEAPON_DEFS[A.firearm].name}</i><i class="${A.cur==='knife'?'on':''}">${Input.label(Binds.knife)} KNIFE</i>`;
+    // weapon slots: primary / secondary share the swap key, the knife or Taser has its own; ammo shown for each gun
+    { const k=[A.primary,A.secondary,A.melee,A.cur,Binds.firearm,Binds.knife].join(); if (this._slotsK!==k){ this._slotsK=k; const L=Input.label(Binds.firearm);
+      $('#slots').innerHTML = [A.primary,A.secondary].filter(Boolean).map(w=>`<i class="${A.cur===w?'on':''}">${L} ${WEAPON_DEFS[w].name}</i>`).join('')+`<i class="${A.cur===A.melee?'on':''}">${Input.label(Binds.knife)} ${WEAPON_DEFS[A.melee].name}</i>`; } }
     { const nic=(StreakAuthority.e.player||{charges:{nic:0}}).charges.nic||0, it=(k,n,act)=>`<i class="${n?'':'dim'}" title="${k}">${ITEM_ICON[k]}${n}<small>${Input.label(Binds[act])}</small></i>`;
       $('#equip').innerHTML = `<i>FLASH ${P.flash}<small>${Input.label(Binds.grenade)}</small></i><i>MINE ${P.mine}<small>${Input.label(Binds.mine)}</small></i>`+it('blunt',P.items.blunt,'smoke')+it('beer',P.items.beer,'beer')+it('zyn',P.items.zyn,'zyn')+it('nic',nic,'nic'); }
     $('#mtimer').textContent = (Mode.cur!=='backpack' && MatchRules.time>0) ? fmtTime(Math.max(0,MatchRules.time-Mode.clock)) : (Mode.cur==='backpack' && ZARules.variant==='hold') ? fmtTime(Math.max(0,ZARules.time-Mode.clock)) : fmtTime(Mode.clock);   // counts down with a time limit $('#mtitle').textContent=(Net.gang ? 'GANG WARS · RED '+Net.teamKills[0]+' – '+Net.teamKills[1]+' BLUE'+(Net.settings&&Net.settings.kills?' · FIRST TO '+Net.settings.kills:'')+' · YOU: '+GANGS[Net.myTeam].name.split(' ')[0] : Mode.title()+' · '+Env.clockString())+(Env.raining?' · RAIN':'');
@@ -683,22 +734,21 @@ const UI = {
           `<span style="color:var(--mut)"> · LEADER ${lead?Mode.nameOf(lead[0])+' '+lead[1].toFixed(1)+'s':'—'}</span>`+
           `<div id="zastand">${rows.map(r=>`<div class="${r[0]==='player'?'me':''} ${r[0]===s.carrier?'car':''}"><span>${Mode.nameOf(r[0])}${r[0]===s.carrier?' ◆':''}</span><span>${r[1].toFixed(1)}s</span></div>`).join('')}</div>`;
       }
-    } else if (Net.inMatch && Net.gang){ const tk=Net.teamKills, K=(Net.settings&&Net.settings.kills)||0, me=Net.myTeam, G=GANGS;
-      $('#objective').innerHTML=`<b style="color:${G[0].col}">RED ${tk[0]}</b> <span style="color:var(--mut)">–</span> <b style="color:${G[1].col}">${tk[1]} BLUE</b>${K>0?' <span style="color:var(--mut)">· FIRST TO '+K+'</span>':''} <span style="color:var(--mut)">· YOU: </span><b style="color:${G[me].col}">${G[me].name}</b>`;
+    } else if (Net.inMatch && Net.gang){ const tk=Net.teamKills, K=(Net.settings&&Net.settings.kills)||0, me=Net.myTeam;
+      $('#objective').innerHTML=GANGS.map((g,i)=>`<b style="color:${g.col}${i===me?';text-decoration:underline':''}">${g.emblem} ${esc(g.name)} ${tk[i]||0}</b>`).join(' <span style="color:var(--mut)">·</span> ')+(K>0?' <span style="color:var(--mut)">· FIRST TO '+K+'</span>':'');
     } else { const top=Match.rows()[0], K=MatchRules.kills; $('#objective').innerHTML=`<b>${P.kills}</b>${K>0?' / '+K:''} KILLS <span style="color:var(--mut)">· LEADER ${top.me?'YOU':top.name} ${top.kills}</span>${K>0?`<span class="kprog"><i style="width:${Math.min(100,P.kills/K*100)}%"></i></span>`:''}`; }
     $('#area').textContent = areaName();
     let t='';
     if (!P.alive || Mode.ended) t='';
     else if (P.riding) t=`<b>${Input.label(Binds.interact)}</b> get off · <b>W</b>/<b>S</b> speed · <b>A</b>/<b>D</b> steer${Rides.steerLocked()?' <span style="color:#ff9a8a">(locked while firing)</span>':''}`;
-    else if (P.inCar) t=`<b>${Input.label(Binds.interact)}</b> get out`;
     else if (P.ladder) t=`<b>W</b>/<b>S</b> climb · <b>${Input.label(Binds.jump)}</b> let go`;
     else if (P.slide) t='';
     else if (!P.anim && !P.search && !P.smoking){
-      const v=nearVault(), lad=nearLadder(), car=nearestCar(), pk=Pickups.near(), srch=nearestSearchable(), K=Input.label(Binds.interact);
+      const v=nearVault(), lad=nearLadder(), pk=Pickups.near(), srch=nearestSearchable(), K=Input.label(Binds.interact);
       if (Mode.nearBackpack()) t=`<b>${K}</b> pick up the BAG`;
       else if (pk>=0){ const p=Pickups.list[pk]; t=`<b>${K}</b> pick up ${WEAPON_DEFS[p.type].name} ammo${p.type!==A.firearm?' (converts)':''}`; }
       else if (v) t=`<b>${Input.label(Binds.jump)}</b> climb over fence`; else if (lad) t=`<b>${K}</b> `+(lad.top?'climb down ladder':'climb ladder');
-      else if (car) t=`<b>${K}</b> get in — ${car.name}`; else if (Rides.near()) t=`<b>${K}</b> ride the ${Rides.near().S.name.toLowerCase()}`; else if (srch) t=`<b>${K}</b> search the trunk`;
+      else if (Rides.near()) t=`<b>${K}</b> ride the ${Rides.near().S.name.toLowerCase()}`; else if (srch) t=`<b>${K}</b> search the trunk`;
       else if (a && a.mag===0 && a.res===0) t='Out of ammo — use the knife or find ammo'; else if (a && a.mag===0) t=`<b>${Input.label(Binds.reload)}</b> reload`; }
     const pr=$('#prompt'); if (pr._t!==t){ pr._t=t; pr.innerHTML=t; pr.style.display=t?'block':'none'; }
     $('#fps').style.display = Settings.showFps ? 'block' : 'none';

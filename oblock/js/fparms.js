@@ -32,6 +32,9 @@ const HAND_PLACE = {
   glock:  { R:{pos:[0.02,0.0,0.03], palm:[-0.75,-0.65,0], fingers:[-0.05,0.05,-1], pose:'pistolR', scale:0.8},
             L:{pos:[-0.028,-0.028,0.0], palm:[0.75,-0.6,-0.1], fingers:[0.35,0.0,-0.94], pose:'pistolL', scale:0.8},
             elbowAds:{R:[0.36,-0.34,0.1], L:[-0.36,-0.34,0.1]} },
+  taser:  { R:{pos:[0.02,0.0,0.03], palm:[-0.75,-0.65,0], fingers:[-0.05,0.05,-1], pose:'pistolR', scale:0.8},
+            L:{pos:[-0.028,-0.028,0.0], palm:[0.75,-0.6,-0.1], fingers:[0.35,0.0,-0.94], pose:'pistolL', scale:0.8},
+            elbowAds:{R:[0.36,-0.34,0.1], L:[-0.36,-0.34,0.1]} },
   drako:  { R:{pos:[0.022,-0.02,0.035], palm:[-1,0,-0.1], fingers:[-0.1,0.45,-0.89], pose:'rifleR'},
             L:{pos:[0.0,0.0,-0.3], palm:[0.15,1,0.05], fingers:[0.95,-0.1,-0.3], pose:'rifleL', sup:true} },
   sniper: { R:{pos:[0.022,-0.02,0.035], palm:[-1,0,-0.1], fingers:[-0.1,0.45,-0.89], pose:'rifleR'},
@@ -40,8 +43,12 @@ const HAND_PLACE = {
   // left hand: fist around the factory vertical grip from the left-rear, fingers wrapped round its front, thumb on top
   ar15:   { R:{pos:[0.026,-0.034,0.018], palm:[-1,0,-0.05], fingers:[-0.05,0.18,-0.98], pose:'arR'},
             L:{pos:[-0.03,0.02,-0.218], palm:[0.94,0,0.35], fingers:[0.35,-0.03,-0.94], pose:'vgripL'} },
+  mp7:    { R:{pos:[0.024,-0.03,0.02], palm:[-1,0,-0.05], fingers:[-0.05,0.18,-0.98], pose:'arR'},
+            L:{pos:[0,0,0], palm:[0.15,1,0.05], fingers:[0.95,-0.1,-0.3], pose:'rifleL', sup:true} },                    // under the handguard, or round the vertical grip
   shotgun:{ R:{pos:[0.022,-0.02,0.035], palm:[-1,0,-0.1], fingers:[-0.1,0.45,-0.89], pose:'rifleR'},
             L:{pos:[0,0,0], palm:[0.15,1,0.05], fingers:[0.95,-0.1,-0.3], pose:'rifleL', sup:true} },                    // under the pump forend
+  sawedoff:{ R:{pos:[0.022,-0.02,0.035], palm:[-1,0,-0.1], fingers:[-0.1,0.45,-0.89], pose:'rifleR'},
+            L:{pos:[0,0,0], palm:[0.15,1,0.05], fingers:[0.95,-0.1,-0.3], pose:'rifleL', sup:true} },                    // under the fore-end
   knife:  { R:{pos:[0.022,0.0,0.0], palm:[-1,0,0], fingers:[0,-0.25,-0.97], pose:'knife'} },
 };
 // Elbow targets (camera space): forearms always point down/back toward these, so they leave the screen at the bottom (ADS: narrow V from the bottom corners)
@@ -134,10 +141,11 @@ const FPArms = {
   hide(arm){ arm.root.visible=false; },
   // weapon-space placement -> VM space
   placeOnWeapon(arm, w, spec, elbow){
+    if (spec.sup && w.vgripOn) spec=VGRIP_L;                // fist round an added vertical grip
     w.model.updateWorldMatrix(true,false);
     const wq=w.model.getWorldQuaternion(new THREE.Quaternion());
     const q=wq.clone().multiply(basisQ(spec.palm, spec.fingers));
-    let p=new V3(...spec.pos); if (spec.sup && w.support) p=w.support.clone().add(new V3(0,-0.022,0));
+    let p=new V3(...spec.pos); if (spec.sup && w.support) p=w.support.clone().add(new V3(...(spec.off||[0,-0.022,0])));
     arm.root.scale.setScalar(spec.scale||1);
     this.pose(arm, spec.pose); this.place(arm, w.model.localToWorld(p), q, elbow);
   },
@@ -145,4 +153,5 @@ const FPArms = {
   pinchAnchor(arm){ return arm.hand.localToWorld(new V3(...VAPE_GRIP.anchor)); },
 };
 // hand-held items: anchor in hand space and the item's orientation in hand space
+const VGRIP_L = {pos:[0,0,0], off:[-0.03,0.035,0], palm:[0.94,0,0.35], fingers:[0.35,-0.03,-0.94], pose:'vgripL', sup:true};
 const VAPE_GRIP = { anchor:[0.03,0.036,-0.03], rot:[0,0,0.25] };

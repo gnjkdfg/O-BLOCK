@@ -7,7 +7,7 @@
 const BOT_TUNE = {
   respawnDelay:5,                 // s after death before a bot re-enters the match
   minSpawnFromPlayer:25,          // m
-  viewDist:{glock:45, drako:60, sniper:95, ar15:70, shotgun:32, knife:40},
+  viewDist:{glock:45, drako:60, sniper:95, ar15:70, mp7:55, shotgun:32, knife:40},
   fov:120,                        // degrees (bots still notice anyone within closeAware)
   closeAware:4,
   hearRange:{normal:40, suppressed:12},
@@ -17,18 +17,19 @@ const BOT_TUNE = {
   farDist:60,                     // beyond this from the camera: slower thinking + animation
   speeds:{walk:1.6, run:3.7, sprint:5.3, crouch:1.3},
   meleeRange:2.0, knifeSwitch:3.2,
-  pref:{glock:[0,18], drako:[8,38], sniper:[25,95], ar15:[6,45], shotgun:[0,10]},   // preferred engagement band per weapon (m)
+  pref:{glock:[0,18], drako:[8,38], sniper:[25,95], ar15:[6,45], mp7:[3,22], shotgun:[0,10], sawedoff:[0,7]},   // preferred engagement band per weapon (m)
 };
 const DIFFICULTY = {
   easy:  {recoilCtl:1.3, react:[0.7,1.1], think:0.5, aimErr:0.075, aimSettle:2.5, leadK:0.2, coverUse:0.25, flank:0.0, hearMul:0.7, burstMul:1.4, retreatHp:20, strafe:0.3},
   normal:{recoilCtl:1.0, react:[0.38,0.6], think:0.33, aimErr:0.045, aimSettle:4,  leadK:0.6, coverUse:0.55, flank:0.25, hearMul:1.0, burstMul:1.0, retreatHp:30, strafe:0.6},
   hard:  {recoilCtl:0.6, react:[0.18,0.32], think:0.2, aimErr:0.025, aimSettle:7,  leadK:0.95, coverUse:0.85, flank:0.6, hearMul:1.35, burstMul:0.8, retreatHp:38, strafe:1.0},
+  expert:{recoilCtl:0.45, react:[0.12,0.22], think:0.14, aimErr:0.017, aimSettle:9, leadK:1.0, coverUse:0.95, flank:0.8, hearMul:1.6, burstMul:0.7, retreatHp:45, strafe:1.2},
 };
 const PERSONALITY = {
-  aggressive:{push:1.0, coverMul:0.4, flankMul:0.5, holdMul:0.3, retreatMul:0.6, weapons:['glock','drako','shotgun','ar15']},
+  aggressive:{push:1.0, coverMul:0.4, flankMul:0.5, holdMul:0.3, retreatMul:0.6, weapons:['glock','drako','shotgun','ar15','sawedoff','mp7']},
   defensive: {push:0.2, coverMul:1.5, flankMul:0.3, holdMul:1.6, retreatMul:1.3, weapons:['sniper','drako','sniper','ar15']},
-  tactical:  {push:0.6, coverMul:1.1, flankMul:1.8, holdMul:0.8, retreatMul:1.0, weapons:['drako','sniper','ar15','shotgun']},
-  balanced:  {push:0.6, coverMul:1.0, flankMul:1.0, holdMul:1.0, retreatMul:1.0, weapons:['glock','drako','sniper','ar15','shotgun']},
+  tactical:  {push:0.6, coverMul:1.1, flankMul:1.8, holdMul:0.8, retreatMul:1.0, weapons:['drako','sniper','ar15','shotgun','mp7']},
+  balanced:  {push:0.6, coverMul:1.0, flankMul:1.0, holdMul:1.0, retreatMul:1.0, weapons:['glock','drako','sniper','ar15','shotgun','sawedoff','mp7']},
 };
 const BOT_NAMES = ['Lil Smoke','Dre','Kiko','Pooh','Bandz','Juju','Tre','Mookie','Scrappy','Nino','Lowkey','Boogie','Tay','Ghost','Rello','Fats','Duke','Slim','Zay','Monty'];
 
@@ -137,13 +138,14 @@ class Bot {
       this.persona=pick(Object.keys(PERSONALITY));
       const look={char:pick(CHAR_ORDER), jacket:pick(JACKET_COLORS)[0], pants:pick(PANTS_COLORS)[0]};
       if (this.rig){ scene.remove(this.rig.root); }
-      this.rig=buildCharacter(look); scene.add(this.rig.root); this.rig.root.visible=false; Thermal.tagBot(this.rig);
+      this.rig=buildCharacter(look,{merged:true}); scene.add(this.rig.root); this.rig.root.visible=false; Thermal.tagBot(this.rig);
       this.label=makeLabel(); this.rig.root.add(this.label.s);
       this.pack=makeBagModel(); this.pack.visible=false; this.rig.bones.chest.add(this.pack); this.pack.position.set(0.12,-0.12,0.13); this.pack.rotation.set(0.1,PI,0.25); this.pack.scale.setScalar(0.9);
       this.knife=createWeapon('knife'); this.knife.model.visible=false; this.rig.weaponSlot.add(this.knife.model);
     }
     const P_=PERSONALITY[this.persona];
-    this.setFirearm(Mode.cur==='backpack' ? 'glock' : pick(P_.weapons));
+    { const R=typeof roomRules==='function'&&roomRules(), L=R ? P_.weapons.filter(w=>R.weapons.includes(w)) : P_.weapons;   // online: only guns the room allows
+      this.setFirearm(Mode.cur==='backpack' || !L.length ? 'glock' : pick(L)); }
   }
   setFirearm(id){
     if (this.weapon) this.rig.weaponSlot.remove(this.weapon.model);
@@ -157,6 +159,7 @@ class Bot {
   get D(){ return DIFFICULTY[Settings.botDifficulty]||DIFFICULTY.normal; }
   get Pe(){ return PERSONALITY[this.persona]; }
   respawn(){
+    this.stunT=0; if (this.rig) stunPose(this.rig,-1);
     const s=Bots.spawnPoint(this); this.pos.set(s[0],0,s[1]);
     const {ground}=probeVertical(s[0],s[1],1); this.pos.y=ground;
     this.vel.set(0,0,0); this.yaw=s[2]??rr(-PI,PI);
@@ -190,6 +193,8 @@ class Bot {
     return any ? {t:best, head} : null;
   }
   // attacker: P | Bot | null
+  // Taser: frozen and shaking for sec seconds; a new hit while already stunned does not restart it
+  stun(sec, dir){ if (!this.alive || this.stunT>0) return false; this.stunT=sec; this.stunDur=sec; this.stunDir=dir; this.reloadT=0; Snd.zap(this.pos.clone().setY(this.pos.y+1)); return true; }
   damage(n, head, by, dir, attacker){
     if (!this.alive) return;
     if (StreakAuthority.invulnerable('bot'+this.i)) return;
@@ -200,6 +205,7 @@ class Bot {
     if (this.hp<=0) this.die(by, dir, head, attacker);
   }
   die(by, dir, head, attacker){
+    this.stunT=0; stunPose(this.rig,-1);
     this.alive=false; this.deadT=0; this.deaths++; this.label.s.visible=false; this.blindT=0; this.target=null; this.path=null; this.mem=null;
     Corpses.spawn(this.rig, dir||new V3(0,0,1), {part:head?'head':null, vel:this.vel?new V3(this.vel.x||0,0,this.vel.z||0):null, force:attacker&&attacker.pos?clamp(14/Math.max(4,attacker.pos.distanceTo(this.pos)),0.8,1.6):1}); this.rig.root.visible=false;
     if (this.fw && !this.useKnife) Pickups.drop(this.pos, this.fw, Math.max(6,Math.min(this.def.mag, this.mag+this.res)));
@@ -327,8 +333,9 @@ class Bot {
     const iv=60/(this.auto?d.rpm:Math.min(d.rpm, this.fw==='glock'?220:600)), B=this.D.burstMul;
     if (this.fw==='sniper') this.fireT=rr(1.3,2.0)*B;
     else if (this.fw==='shotgun') this.fireT=Math.max(d.pumpTime+0.1, rr(0.75,1.05)*B);
+    else if (this.fw==='sawedoff') this.fireT=rr(0.35,0.6)*B;          // both barrels quickly, then the long reload
     else if (this.fw==='glock' && !this.auto) this.fireT=rr(0.22,0.4)*B;
-    else { const bl=this.fw==='drako'?[3,6]:this.fw==='ar15'?[4,8]:[5,9]; if (this.burst>=Math.round(rr(...bl))){ this.burst=0; this.fireT=rr(0.3,0.6)*B; } else this.fireT=iv; }
+    else { const bl=this.fw==='drako'?[3,6]:this.fw==='ar15'?[4,8]:this.fw==='mp7'?[5,10]:[5,9]; if (this.burst>=Math.round(rr(...bl))){ this.burst=0; this.fireT=rr(0.3,0.6)*B; } else this.fireT=iv; }
     const mz=this.weapon.model.localToWorld(this.weapon.muzzle.clone()), o=eyeOf(this);
     // aim: lead the target, add difficulty error that shrinks as the bot settles, plus recoil bloom
     const tgt=(this.aimPart==='head'?eyeOf(t).add(new V3(0,-0.04,0)):chestOf(t)).addScaledVector(velOf(t), this.D.leadK*clamp(this.visDist/300,0,0.25));
@@ -370,7 +377,7 @@ class Bot {
     const goal=Mode.botGoal(this);
     // weapon choice: knife up close (or when dry), firearm otherwise
     const near=this.lastVis ? this.visDist : 99;
-    const wantKnife = (near<BOT_TUNE.knifeSwitch && this.fw!=='glock' && this.fw!=='shotgun') || (this.mag<=0 && this.res<=0);
+    const wantKnife = (near<BOT_TUNE.knifeSwitch && this.fw!=='glock' && this.fw!=='shotgun' && this.fw!=='sawedoff') || (this.mag<=0 && this.res<=0);
     if (wantKnife!==this.useKnife){ this.useKnife=wantKnife; this.showWeapon(); }
     if (goal && goal.urgent && !this.lastVis){ this.setState('objective'); return; }
     if (lowHp && t && this.state!=='retreat' && Pe.retreatMul>0.5){ this.setState('retreat'); return; }
@@ -400,6 +407,10 @@ class Bot {
   // ------------------------------------------------ per-frame update
   update(dt){
     if (!this.alive){ this.deadT+=dt; if (this.deadT>BOT_TUNE.respawnDelay && !Mode.ended && !Net.inMatch) this.respawn(); return; }   // online: the server respawns bots
+    if (this.stunT>0){   // tased: no moving, aiming or shooting; plays the stun pose, then carries on
+      this.stunT=Math.max(0,this.stunT-dt); this.speed=0; const rg=this.rig; rg.root.position.copy(this.pos); rg.root.rotation.y=this.yaw;
+      animateCharacter(rg,{speed:0, pitch:-0.2, hold:{weapon:this.heldWeapon(), kick:0}}, dt); stunPose(rg, this.stunDur-this.stunT, this.stunDur, this.stunDir);
+      if (this.stunT<=0) stunPose(rg,-1); return; }
     const camD=this.pos.distanceTo(camera.position), far=camD>(Settings.superPerf?22:Settings.perf||Settings.quality==='potato'?35:BOT_TUNE.farDist);
     this.blindT=Math.max(0,this.blindT-dt); this.stateT+=dt; this.reactT=Math.max(0,this.reactT-dt); this.swingT=Math.max(0,this.swingT-dt); this.noCrouchT=Math.max(0,(this.noCrouchT||0)-dt);
     this.bloom=Math.max(0,this.bloom-dt*1.8); this.kick=damp(this.kick,0,12,dt);
@@ -473,7 +484,7 @@ class Bot {
     const tp=t&&this.lastVis?chestOf(t):null, e=eyeOf(this);
     const pitch = tp ? Math.atan2(tp.y-e.y, Math.hypot(tp.x-e.x,tp.z-e.z)) : -0.15;
     this.label.s.visible = camD<40 || (Net.gang && this.team!==undefined && this.team===Net.myTeam);
-    charLOD(this, camD>Perf.lodDist());
+    charLOD(this, camD>Perf.lodDist()); charOutline(this);
     this.animAcc=(this.animAcc||0)+dt;
     if (!far || this.animAcc>1/Perf.botAnimHz()){
       const md=this.moveDir||0;
@@ -488,6 +499,9 @@ class Bot {
    Uses render layers, not .visible, so the game's own show/hide logic (ski mask, weapon swaps, backpack) is untouched and
    the thermal / wall-hack layers still see everything. Toggled only when a character crosses the distance. */
 const LOD_TRIS = 300;
+// outline colour: red for enemies; in Gang Wars everyone wears their team colour (so teammates and enemies differ)
+function charOutline(ent){ const t=Net.inMatch&&Net.gang ? Net.teamOf(ent) : null, col=t!=null&&GANGS[t] ? GANGS[t].col : '#b03a30', key=col+Settings.outlines+Perf.sup;
+  if (ent._ol===key && ent._olRoot===ent.rig.root) return; ent._ol=key; ent._olRoot=ent.rig.root; setOutline(ent.rig, col); }
 function charLOD(ent, far){
   if (ent._lod===far && ent._lodRoot===ent.rig.root && ent._lodW===ent.weapon) return;
   ent._lod=far; ent._lodRoot=ent.rig.root; ent._lodW=ent.weapon;

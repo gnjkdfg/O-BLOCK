@@ -12,7 +12,12 @@ const ITEMS = {
   beer: {name:'BEER',  max:3, action:'beer', dur:2.4, heal:25, healOver:5, buzz:20, dmgTaken:0.9, sway:0.0035},
   zyn:  {name:'ZYN',   max:3, action:'zyn',  dur:1.3, effect:30, spreadMul:1/1.5},
 };
-const LOOT_TABLE = { beer:1/7, blunt:1/5, zyn:1/8, ammo:1/4 };
+const LOOT_TABLE = { beer:1/7, blunt:1/5, zyn:1/8, ammo:0.6 };
+// ammo: each gun has its own type; reserves cap at 1.5x the starting reserve (same rule on the server)
+const ammoCap = id => Math.round(weaponDef(id).reserve*1.5);
+const lootAmt = id => id==='taser' ? 2 : weaponDef(id).mag;
+function addAmmo(id, n){ const a=Arsenal.ammo[id]; if (!a) return 0; const add=Math.max(0, Math.min(n, ammoCap(id)-a.res)); a.res+=add; return add; }
+function lootGuns(){ return [Arsenal.primary, Arsenal.secondary, Arsenal.melee].filter((w,i,l)=>w && w!=='knife' && l.indexOf(w)===i && Arsenal.ammo[w]); }
 
 const Effects = {
   zyn:0, beer:0, beerHeal:0,
@@ -59,7 +64,7 @@ function useCurve(t, dur){ const up=0.4, down=0.35; if (t<up){ const u=t/up; ret
 function rollTrunk(){
   const found=[];
   for (const k of ['beer','blunt','zyn']) if (Math.random()<LOOT_TABLE[k]){ if ((P.items[k]||0)<ITEMS[k].max){ P.items[k]=(P.items[k]||0)+1; found.push(k); } else found.push(k+'-full'); }
-  if (Math.random()<LOOT_TABLE.ammo){ const a=Arsenal.ammo[Arsenal.firearm], d=weaponDef(Arsenal.firearm); if (a){ a.res+=Math.ceil(d.mag*0.5); found.push('ammo'); } }
+  if (Math.random()<LOOT_TABLE.ammo) for (const w of lootGuns()){ const n=addAmmo(w, lootAmt(w)); found.push(n>0 ? 'ammo:'+w+':'+n : 'ammo:'+w+'-full'); }
   return found;
 }
 

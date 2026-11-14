@@ -171,7 +171,7 @@ function nicTipWorld(){
 let NicAsset=null;
 function loadNicAsset(){
   return new Promise(res=>{ const b64=(window.GLB||{}).nic; if (!b64) return res();
-    const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+    GLBfree(b64); const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
     new THREE.GLTFLoader().parse(buf.buffer,'',g=>{ g.scene.traverse(o=>{ if (o.isMesh){ o.castShadow=true;
       // normal lit material: pink body with a little gloss, nothing emissive (it was blowing out)
       const m=o.material; o.material=new THREE.MeshStandardMaterial({map:m.map||null, color:'#e6e0e2', roughness:0.42, metalness:0.0}); } }); NicAsset=g.scene; res(); }, ()=>res()); });

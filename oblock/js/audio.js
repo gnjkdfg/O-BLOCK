@@ -13,8 +13,11 @@ const AUDIO_TUNE = {
   switchG:{crack:0.9, body:0.36, tail:0.38, crackDur:0.11, rate:1.07, bright:3500, rattle:0.06},
   sniper: {crack:1.05, body:0.7, tail:0.55, crackDur:0.6, variants:[['sniper_shot',1.0],['sniper_shot',0.97],['sniper_shot',1.025]]},
   ar15:   {crack:1.1, body:0.5, tail:0.4, crackDur:0.2, variants:[['ar_a',1.0],['ar_b',1.0],['ar_c',1.0],['ar_b',0.97]]},
+  mp7:    {crack:0.95, body:0.35, tail:0.3, crackDur:0.14, variants:[['mp7_a',1.0],['mp7_b',1.0],['mp7_c',1.0],['mp7_b',0.98]]},   // cut from the supplied SMG recording
   shotgun:{crack:1.2, body:0.85, tail:0.5, crackDur:0.55, variants:[['sg_a',1.0],['sg_b',1.0],['sg_a',0.96],['sg_b',1.03]]},
-  tailOffset:{ar_a:0.2, ar_b:0.2, ar_c:0.2, sg_a:0.3, sg_b:0.3, drako_a:0.09, drako_b:0.09, glock_shot:0.13, sniper_shot:0.18}, releaseTail:1.2,
+  sawedoff:{crack:1.25, body:0.95, tail:0.55, crackDur:0.6, variants:[['so_shot',1.0],['so_shot',0.96],['so_shot',1.04]]},
+  taser:  {crack:0.9, body:0.05, tail:0.1, crackDur:0.95, variants:[['tz_fire',1.0],['tz_fire',1.04],['tz_fire',0.97]]},
+  tailOffset:{so_shot:0.35, tz_fire:0.9, ar_a:0.2, ar_b:0.2, ar_c:0.2, sg_a:0.3, sg_b:0.3, drako_a:0.09, drako_b:0.09, glock_shot:0.13, sniper_shot:0.18}, releaseTail:1.2,
   lowAmmo:3, lowAmmoClick:0.14,
   far:{ref:4, rolloff:1.1, lpNear:16000, lpFar:1600, farDist:120, tailBoost:1.8},
   limiter:{threshold:-3, ratio:20, attack:0.001, release:0.08},
@@ -127,7 +130,7 @@ const Snd = {
     // crack (+ the sample's own punch) — pooled, plays to its end
     this.play(key,{pos, rate, vol:T.crack*vol, max:A.pool, pool:id+'_crack', dur:suppressed?0.18:T.crackDur, filter:lp, hrtf:remote, send:remote?0.25+farK*0.6:0.12});
     // body: low thump (own shots only; distant shots lose their low end)
-    if (!remote || d<25) this.thump(t, id==='sniper'?75:id==='shotgun'?65:id==='drako'||id==='ar15'?85:110, T.body*vol*(remote?0.4:1)*(suppressed?0.5:1), this.bus.guns);
+    if (!remote || d<25) this.thump(t, id==='sniper'?75:id==='shotgun'||id==='sawedoff'?62:id==='drako'||id==='ar15'?85:110, T.body*vol*(remote?0.4:1)*(suppressed?0.5:1), this.bus.guns);
     // tail: one voice per weapon, restarted (extended) by each shot; the last one rings out in full on release
     const tk=A.tailOffset[key]||0.1, tv=T.tail*vol*(remote?1+farK*(A.far.tailBoost-1):1)*(suppressed?0.4:1);
     this.play(key,{pos, rate:rate*0.98, vol:tv, max:1, pool:id+'_tail'+(remote?'_r':''), offset:tk, dur:remote||!rapid ? undefined : 0.35, filter:{type:'lowpass',f:remote?lerp(5000,1200,farK):5200}, hrtf:remote, send:0.35});
@@ -141,12 +144,18 @@ const Snd = {
   // Switch (full-auto) Glock: the imported burst recording plays while the trigger is held
   autoStart(pos){ if (!this.ctx || this.autoSrc) return; this.autoSrc=this.play('glock_auto',{pos,vol:0.85,max:1,loop:true,offset:0.05}); },
   autoStop(){ if (this.autoSrc){ this.stop(this.autoSrc,0.08); this.autoSrc=null; } },
-  reload(id){ if (id==='shotgun') return this.shellReload(); const k={drako:'drako_reload',glock:'glock_reload',sniper:'sniper_reload',ar15:'ar_reload'}[id]; if (k) return this.play(k,{vol:0.9,max:1,cat:'reload'}); },
+  // sawed-off: the two-shell and the one-shell reload are separate recordings
+  // pos = another player's reload (heard nearby, positioned); no pos = your own
+  reload(id, missing, pos=null){ const o={max:pos?4:2, cat:'reload', pos, hrtf:!!pos};
+    if (id==='sawedoff') return this.play(missing===1?'so_r1':'so_r2',Object.assign(o,{vol:0.95})); if (id==='taser') return this.play('glock_reload',Object.assign(o,{vol:0.6,rate:1.25}));
+    if (id==='shotgun') return pos ? this.play('glock_reload',Object.assign(o,{vol:0.5,rate:0.8})) : this.shellReload();
+    const k={drako:'drako_reload',glock:'glock_reload',sniper:'sniper_reload',ar15:'ar_reload',mp7:'mp7_reload'}[id]; if (k) return this.play(k,Object.assign(o,{vol:0.9,max:pos?4:1})); },
   // shotgun: shells pushed into the tube (short clicks), then the pump racks
   shellReload(){ if (!this.ctx) return null; const T=WEAPON_DEFS.shotgun.reloadTime; const ids=[];
     for (let i=0;i<5;i++) ids.push(setTimeout(()=>{ if (Arsenal.state==='reload') this.click(0,1500+Math.random()*300,0.2,'reload'); }, (0.25+i*0.42)*1000));
     ids.push(setTimeout(()=>{ if (Arsenal.state==='reload') this.pump(); }, T*0.78*1000));
     return {timers:ids}; },
+  zap(pos){ return this.play('tz_zap',{pos, vol:0.9, max:3, cat:'reload', hrtf:!!pos}); },          // Taser hit: crackle on the target
   pump(pos){ return this.play('sg_pump',{pos, vol:0.95, max:2, cat:'reload', hrtf:!!pos}); },   // own channel: gunfire never cuts it
   click(t0=0, f=2500, g=0.25, cat='guns'){ if (!this.ctx) return; const t=this.ctx.currentTime+t0; this.noise(t,0.03,{f,q:3,gain:g,cat}); this.tone(t,f*0.6,f*0.3,0.03,{type:'square',gain:g*0.3,cat}); },
   dry(){ this.click(0,3200,0.25); },
@@ -272,28 +281,23 @@ const Snd = {
     if (L.positionX){ L.positionX.value=p.x; L.positionY.value=p.y; L.positionZ.value=p.z; L.forwardX.value=f.x; L.forwardY.value=f.y; L.forwardZ.value=f.z; L.upX.value=0; L.upY.value=1; L.upZ.value=0; }
     else { L.setPosition(p.x,p.y,p.z); L.setOrientation(f.x,f.y,f.z,0,1,0); }
   },
-  // ---------- music: imported tracks, streamed from data URLs, crossfaded, never overlapping
-  playMusic(name){
-    const data=(window.MUSIC_DATA||{})[name];
-    if (this.music.cur===name) return;
-    const prev=this.music.cur; this.music.cur=name;
-    if (prev && this.music.els[prev]) this.fadeEl(this.music.els[prev],0,()=>{ this.music.els[prev].pause(); });
-    if (!data) return; // track script not loaded yet: retried by loadMusic()
-    let e=this.music.els[name];
-    if (!e){ e=new window.Audio('data:audio/mpeg;base64,'+data); e.loop=true; e.volume=0; this.music.els[name]=e; }
-    e.play().catch(()=>{});
-    this.fadeEl(e, clamp((Settings.master/100)*(Settings.music/100),0,1));
+  // ---------- music: a playlist of imported tracks. Only ONE track is in memory at a time: its script is fetched when
+  // it is about to play and released when the next one starts. The menu keeps the current track; each match moves on.
+  playMusic(ctx){ const M=this.music; if (M.ctx===ctx) return; const first=!M.ctx; M.ctx=ctx; if (first || ctx==='song_game') this.nextTrack(); },
+  nextTrack(){
+    const M=this.music; if (M.i===undefined) M.i=Math.floor(Math.random()*MUSIC_TRACKS.length); else M.i=(M.i+1)%MUSIC_TRACKS.length;
+    const name=MUSIC_TRACKS[M.i], go=()=>{ if (MUSIC_TRACKS[M.i]!==name) return;        // skipped on while it was loading
+      const old=M.els[M.cur]; if (old){ old.onended=null; this.fadeEl(old,0,()=>{ old.pause(); old.removeAttribute('src'); old.load(); }); delete M.els[M.cur]; }
+      const e=new window.Audio('data:audio/mpeg;base64,'+window.MUSIC_DATA[name]); delete window.MUSIC_DATA[name]; e.volume=0; e.onended=()=>this.nextTrack();
+      M.els[name]=e; M.cur=name; e.play().catch(()=>{}); this.fadeEl(e, clamp((Settings.master/100)*(Settings.music/100),0,1)); };
+    if ((window.MUSIC_DATA||{})[name]) return go();
+    const sc=document.createElement('script'); sc.src='assets/'+name+'.js'; sc.onload=()=>{ sc.remove(); go(); }; document.body.appendChild(sc);
   },
   fadeEl(e, to, done){ clearInterval(e._f); const from=e.volume, t0=performance.now();
     e._f=setInterval(()=>{ const k=Math.min(1,(performance.now()-t0)/1200); e.volume=clamp(lerp(from,to,k),0,1); if (k>=1){ clearInterval(e._f); done&&done(); } },50); },
 };
-function loadMusic(){
-  for (const n of ['song_menu','song_game']){
-    const s=document.createElement('script'); s.src='assets/'+n+'.js';
-    s.onload=()=>{ if (Snd.music.cur===n){ Snd.music.cur=null; Snd.playMusic(n); } };
-    document.body.appendChild(s);
-  }
-}
+const MUSIC_TRACKS=['song4','song5','song6','song7'];
+function loadMusic(){}   // tracks load one at a time when they are about to play (see Snd.nextTrack)
 
 /* City ambience (no ambience files were supplied, so it is synthesized):
    traffic rumble bed, wind gusts, and occasional distant sirens, horns and voices,

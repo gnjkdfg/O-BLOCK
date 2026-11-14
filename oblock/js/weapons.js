@@ -3,7 +3,9 @@
    Weapon space: origin = right-hand grip, barrel points -Z, up is +Y, metres. */
 const bx = (w,h,d) => new THREE.BoxGeometry(w,h,d);
 const cy = (r1,r2,h,s=7) => new THREE.CylinderGeometry(r1,r2,h,s);
-const WEAPON_ORDER = ['glock','drako','sniper','shotgun','ar15','knife'];
+const WEAPON_ORDER = ['drako','sniper','shotgun','ar15','mp7','glock','sawedoff','knife','taser'];
+// loadout slots: one primary, one secondary, and a melee slot (the knife, or the Taser which replaces it)
+const WEAPON_SLOT = { drako:'primary', sniper:'primary', shotgun:'primary', ar15:'primary', mp7:'primary', glock:'secondary', sawedoff:'secondary', knife:'melee', taser:'melee' };
 
 // insertAt = fraction of the reload when the new magazine seats (synced to the imported reload audio);
 // cancelling before that point keeps the old ammo count, after it the mag is already in.
@@ -23,10 +25,23 @@ const WEAPON_DEFS = {
            spreadHip:0.026, spreadAds:0.004, spreadMove:0.02,
            recoil:{p:0.0125, y:0.0055, kick:0.85, pattern:[0,0.3,-0.25,0.4,-0.35,0.15,0.45,-0.4,-0.1,0.3]}, recover:7,
            reloadTime:2.3, insertAt:0.6, adsZoom:0.74, adsTime:0.15, sound:'ar15', moveMul:0.97, flash:1.1},
+  // MP7 (imported model, $3,000): fast-firing SMG. Strong close / mid, falls off past 30 m; 30-round mag (40 extended)
+  mp7:    {name:'MP7', kind:'auto', mag:30, reserve:150, rpm:900, dmg:19, headMul:1.8, range:110, falloff:[20,65,0.5],
+           spreadHip:0.02, spreadAds:0.0055, spreadMove:0.015,
+           recoil:{p:0.0105, y:0.006, kick:0.75, pattern:[0,0.35,-0.3,0.45,-0.4,0.25,0.5,-0.45,-0.15,0.35]}, recover:8,
+           reloadTime:2.0, insertAt:0.65, adsZoom:0.8, adsTime:0.12, sound:'mp7', moveMul:1.0, flash:0.9},
   // Pump shotgun (imported model): 8 pellets, devastating up close, falls off fast
   shotgun:{name:'PUMP SHOTGUN', kind:'pump', mag:7, reserve:35, rpm:90, dmg:20, pellets:9, pelletSpread:0.04, headMul:1.5, range:50, falloff:[12,38,0.35],   // buffed (was 16 dmg x 8, spread 0.05, falloff 9-32 m)
            spreadHip:0.012, spreadAds:0.006, spreadMove:0.02,
            recoil:{p:0.06, y:0.012, kick:1.8}, recover:3.5, reloadTime:2.7, insertAt:0.62, adsZoom:0.82, adsTime:0.18, sound:'shotgun', moveMul:0.97, flash:1.5, pumpTime:0.5},
+  // Sawed-off (secondary, imported model): two shells, brutal up close, almost harmless past ~16 m; long reloads
+  sawedoff:{name:'SAWED-OFF', kind:'break', mag:2, reserve:24, rpm:260, dmg:24, pellets:9, pelletSpread:0.065, headMul:1.4, range:30, falloff:[5,16,0.1],
+           spreadHip:0.02, spreadAds:0.012, spreadMove:0.02,
+           recoil:{p:0.1, y:0.022, kick:2.6}, recover:3, reloadTime:2.3, reload1:2.1, insertAt:0.88, adsZoom:0.88, adsTime:0.14, sound:'sawedoff', moveMul:1.0, flash:1.8},
+  // Taser (melee slot, replaces the knife): one cartridge per shot, 20 m wire range, a hit stuns the target for 5 s
+  taser:  {name:'TASER', kind:'taser', mag:1, reserve:5, rpm:40, dmg:8, headMul:1, range:20, falloff:null, stun:5,
+           spreadHip:0.008, spreadAds:0.003, spreadMove:0.01,
+           recoil:{p:0.015, y:0.004, kick:0.7}, recover:8, reloadTime:1.6, insertAt:0.6, adsZoom:0.9, adsTime:0.12, sound:'taser', moveMul:1.05, flash:0, noFlash:true},
   knife:  {name:'KNIFE', kind:'melee', dmg:55, heavyDmg:100, range:2.4, rate:0.48, heavyRate:1.0, moveMul:1.08},
 };
 const GLOCK_SWITCH_RPM = 1100;
@@ -46,22 +61,22 @@ const ATTACHMENTS = {
   dot_closed: {name:'Enclosed red dot', cat:'optic', for:['glock'], part:'optic_a', desc:'Boxed reflex sight, steadier picture.', pros:['1.2x magnification','Less visual recoil'], cons:['Slower ADS'], mods:{zoom:1.2, vkick:-0.15, ads:-0.08}},
   scope15:    {name:'1.5x scope', cat:'optic', for:['drako','ar15'], desc:'Low-power scope for mid-range lanes.', pros:['1.5x magnification','Reduced visual recoil'], cons:['ADS speed -20%','Running speed -20%'], mods:{zoom:1.5, vkick:-0.35, ads:-0.20, move:-0.20}},
   scope25:    {name:'2.5x scope', cat:'optic', for:['drako','ar15'], desc:'Higher magnification for long sight lines.', pros:['2.5x magnification','Reduced visual recoil'], cons:['ADS speed -30%','Running speed -30%'], mods:{zoom:2.5, vkick:-0.45, ads:-0.30, move:-0.30}},
-  vgrip:      {name:'Vertical grip', cat:'under', for:['drako','glock'], part:'foregrip', desc:'Front grip for a firmer hold.', pros:['Recoil -20%'], cons:['Movement speed -10%','ADS speed -5%'], mods:{recoil:-0.20, move:-0.10, ads:-0.05}},
+  vgrip:      {name:'Vertical grip', cat:'under', for:['drako','glock','mp7'], part:'foregrip', desc:'Front grip for a firmer hold.', pros:['Recoil -20%'], cons:['Movement speed -10%','ADS speed -5%'], mods:{recoil:-0.20, move:-0.10, ads:-0.05}},
   brace:      {name:'Brace stock', cat:'stock', for:['glock'], part:'stock_c', desc:'Arm brace that braces against the forearm.', pros:['Recoil -30%'], cons:['ADS speed -8%','Movement speed -5%'], mods:{recoil:-0.30, ads:-0.08, move:-0.05}},
   skeleton:   {name:'Skeleton stock', cat:'stock', for:['glock'], part:'stock_b', desc:'Light skeleton stock.', pros:['Recoil -35%'], cons:['ADS speed -10%','Movement speed -6%'], mods:{recoil:-0.35, ads:-0.10, move:-0.06}},
   folding:    {name:'Folding stock', cat:'stock', for:['glock'], part:'stock_a', desc:'Full folding stock, most stable.', pros:['Recoil -40%'], cons:['ADS speed -12%','Movement speed -8%'], mods:{recoil:-0.40, ads:-0.12, move:-0.08}},
   suppressor: {name:'Suppressor', cat:'muzzle', for:['drako','glock','sniper','ar15'], part:'silencer', desc:'Quieter shots that do not show on the minimap.', pros:['Shot volume -70%','No minimap ping','Bots do not hear you'], cons:['Range -10%','ADS speed -5%'], mods:{loud:-0.7, noPing:true, range:-0.10, ads:-0.05}},
   compensator:{name:'Compensator', cat:'muzzle', for:['drako','glock','ar15'], part:'comp', desc:'Hides muzzle flash, −15% damage.', pros:['No muzzle flash (no light, harder to spot)','Recoil -12%'], cons:['Damage -15%'], mods:{noFlash:true, dmg:-0.15, recoil:-0.12}},
-  laser:      {name:'Laser', cat:'other', for:['drako','glock','sniper','ar15','shotgun'], part:'laser', desc:'Visible beam that tightens hip-fire.', pros:['Hip-fire spread -40%'], cons:['Beam shows where you aim'], mods:{hip:-0.40, laser:true}},
+  laser:      {name:'Laser', cat:'other', for:['drako','glock','sniper','ar15','shotgun','sawedoff','mp7'], part:'laser', desc:'Visible beam that tightens hip-fire.', pros:['Hip-fire spread -40%'], cons:['Beam shows where you aim'], mods:{hip:-0.40, laser:true}},
   flashlight: {name:'Flashlight', cat:'other', for:['glock'], part:'flashlight', desc:'Bright light that dazzles close targets.', pros:['Bots within 20 m you aim at lose 30% accuracy'], cons:['ADS speed -3%'], mods:{glare:true, ads:-0.03}},
-  mag_std:    {name:'Standard mag', cat:'mag', for:['glock'], part:'mag_std', desc:'17 rounds.', pros:['Fastest reload'], cons:[], mods:{cap:17}},
-  mag_ext:    {name:'Extended mag', cat:'mag', for:['glock'], part:'mag_ext', desc:'31 rounds.', pros:['+14 rounds'], cons:['Reload +10%','Movement speed -3%'], mods:{cap:31, reload:0.10, move:-0.03}},
+  mag_std:    {name:'Standard mag', cat:'mag', for:['glock','mp7'], part:'mag_std', desc:'Factory magazine: Glock 17 · MP7 30 rounds.', pros:['Fastest reload'], cons:[], mods:{cap:{glock:17, mp7:30}}},
+  mag_ext:    {name:'Extended mag', cat:'mag', for:['glock','mp7'], part:'mag_ext', desc:'Longer magazine: Glock 31 · MP7 40 rounds.', pros:['+14 rounds (Glock) · +10 rounds (MP7)'], cons:['Reload +10%','Movement speed -3%'], mods:{cap:{glock:31, mp7:40}, reload:0.10, move:-0.03}},
   mag_drum:   {name:'Drum mag', cat:'mag', for:['glock'], part:'mag_drum', desc:'50 rounds.', pros:['+33 rounds'], cons:['Reload +30%','Movement speed -8%','ADS speed -10%'], mods:{cap:50, reload:0.30, move:-0.08, ads:-0.10}},
 };
 const SLOT_LABELS = {optic:'Optics', under:'Underbarrel', stock:'Stock', muzzle:'Muzzle', other:'Other', mag:'Magazine'};
-const WEAPON_SLOTS = { drako:['optic','under','muzzle','other'], glock:['optic','under','stock','muzzle','other','mag'], sniper:['muzzle','other'], ar15:['optic','muzzle','other'], shotgun:['other'], knife:[] };
+const WEAPON_SLOTS = { drako:['optic','under','muzzle','other'], glock:['optic','under','stock','muzzle','other','mag'], sniper:['muzzle','other'], ar15:['optic','muzzle','other'], mp7:['under','other','mag'], shotgun:['other'], sawedoff:['other'], taser:[], knife:[] };
 const SLOT_DEFAULT = { optic:'iron', mag:'mag_std' };          // slots that cannot be empty
-const WEAPON_CATEGORY = { drako:'Compact rifle', glock:'Pistol', sniper:'Bolt-action rifle', ar15:'Assault rifle', shotgun:'Pump shotgun', knife:'Melee · always carried' };
+const WEAPON_CATEGORY = { drako:'Compact rifle', glock:'Pistol', sniper:'Bolt-action rifle', ar15:'Assault rifle', mp7:'Submachine gun', shotgun:'Pump shotgun', sawedoff:'Sawed-off · secondary', taser:'Stun gun · replaces the knife', knife:'Melee · default' };
 const PAINT = {
   drako:[ {key:'metal', label:'Receiver', opts:[['Factory',null],['Blued black','#202123'],['Gunmetal','#45484c'],['FDE','#8f7a58'],['OD green','#4a5233'],['Chrome','#c9ccd0'],['Gold','#c9a23a'],['Crimson','#7e1717']]},
           {key:'furniture', label:'Furniture', opts:[['Factory wood',null],['Dark walnut','#7a4a2a'],['Black polymer','#1c1c1d'],['OD polymer','#4c5534'],['Tan polymer','#a08a62'],['Red','#8e1b1b']]},
@@ -74,8 +89,14 @@ const PAINT = {
            {key:'metal', label:'Barrel & scope', opts:[['Factory',null],['Black','#1e1f21'],['Gunmetal','#4b4e52'],['Bronze','#8a6a3a'],['Chrome','#c6c9cc']]} ],
   ar15:[ {key:'metal', label:'Receiver', opts:[['Factory',null],['Black','#222326'],['Gunmetal','#4a4d52'],['FDE','#9a8460'],['OD green','#4b5434'],['Wolf grey','#6e7176'],['Crimson','#7e1717'],['Cobalt','#25508f']]},
           {key:'finish', label:'Finish', opts:[['Satin',{r:0.45,m:0.5}],['Matte',{r:0.8,m:0.15}],['Polished',{r:0.22,m:0.75}],['Cerakote',{r:0.62,m:0.25}]]} ],
+  mp7:[ {key:'metal', label:'Body', opts:[['Factory',null],['Black','#1e1f21'],['Gunmetal','#4a4d52'],['FDE','#9a8460'],['OD green','#4b5434'],['Wolf grey','#6e7176'],['Crimson','#7e1717'],['Cobalt','#25508f']]},
+          {key:'finish', label:'Finish', opts:[['Satin',{r:0.5,m:0.4}],['Matte',{r:0.8,m:0.15}],['Polished',{r:0.25,m:0.7}]]} ],
   shotgun:[ {key:'metal', label:'Receiver', opts:[['Factory',null],['Black','#1f2022'],['Gunmetal','#4a4d52'],['FDE','#9a8460'],['OD green','#4b5434'],['Chrome','#c6c9cc']]},
           {key:'finish', label:'Finish', opts:[['Satin',{r:0.45,m:0.5}],['Matte',{r:0.8,m:0.15}],['Polished',{r:0.22,m:0.75}]]} ],
+  sawedoff:[ {key:'metal', label:'Barrels', opts:[['Factory',null],['Black','#1f2022'],['Gunmetal','#4a4d52'],['Chrome','#c6c9cc'],['Gold','#c9a23a']]},
+          {key:'finish', label:'Finish', opts:[['Satin',{r:0.45,m:0.5}],['Matte',{r:0.8,m:0.15}],['Polished',{r:0.22,m:0.75}]]} ],
+  taser:[ {key:'metal', label:'Body', opts:[['Factory yellow',null],['Black','#1c1c1d'],['Blue','#2357a3'],['Pink','#d8709d']]},
+          {key:'finish', label:'Finish', opts:[['Satin',{r:0.5,m:0.2}],['Matte',{r:0.85,m:0.05}]]} ],
   knife:[ {key:'blade', label:'Blade', opts:[['Steel','#c9ccd1'],['Black oxide','#2a2b2e'],['Gold','#d4a937'],['Damascus','#9fa3a8'],['Blood red','#8a1c1c']]},
           {key:'handle', label:'Handle wrap', opts:[['OD cord','#ffffff'],['Black','#3a3a3a'],['Red','#b03030'],['Tan','#c2a77a'],['Blue','#4a72b8']]},
           {key:'fittings', label:'Guard & pommel', opts:[['Brass','#b08a3a'],['Black','#202022'],['Steel','#b8bcc0'],['Gold','#d8b040']]} ],
@@ -116,7 +137,7 @@ function weaponStats(id, opts={}){
   for (const s of WEAPON_SLOTS[id]){ const a=cfg.att[s]; if (!a) continue; const A=ATTACHMENTS[a]; d.attachments.push(a);
     for (const k in A.mods){ if (typeof A.mods[k]==='number' && k in m) m[k]+=A.mods[k]; }
     if (A.mods.zoom) d.adsZoom=Math.min(d.adsZoom, 1/A.mods.zoom);
-    if (A.mods.cap) d.mag=A.mods.cap;
+    if (A.mods.cap) d.mag=typeof A.mods.cap==='object' ? (A.mods.cap[id]||d.mag) : A.mods.cap;
     if (A.mods.noFlash) d.noFlash=true; if (A.mods.noPing) d.noPing=true; if (A.mods.laser) d.laser=true; if (A.mods.glare) d.glare=true; }
   d.suppressed = d.attachments.includes('suppressor');
   d.recoil.p *= (1+m.recoil); d.recoil.y *= (1+m.recoil)*(1+m.hrecoil); d.recoil.kick=(base.recoil.kick||1)*(1+m.vkick);
@@ -165,10 +186,15 @@ function loadAssets(){
   // GLB data ships inside assets/*.js as base64 (keeps the game a plain static site)
   const load=(name)=>new Promise((res,rej)=>{
     const b64=(window.GLB||{})[name]; if (!b64) return rej('missing '+name);
-    const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+    GLBfree(b64); const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
     loader.parse(buf.buffer, '', g=>res(g.scene), rej);
   });
-  return Promise.all([load('glock'), load('sniper'), load('drako'), load('ar'), load('sg')]).then(([g,s,d,ar,sg])=>{
+  return Promise.all([load('glock'), load('sniper'), load('drako'), load('ar'), load('sg'), load('sawed'), load('taser'), load('mp7')]).then(([g,s,d,ar,sg,so,tz,mp])=>{
+    // imported secondaries (assets/sec.js), prepared like the AR / shotgun: grip at the origin, muzzle toward -Z
+    for (const sc of [so,tz]) sc.traverse(o=>{ if (o.isMesh){ o.castShadow=true; for (const m of [].concat(o.material)){ m.metalness=0.3; m.roughness=0.55; m.needsUpdate=true; } } });
+    Assets.sawedoff=so; Assets.taser=tz;
+    // imported MP7 (assets/mp7.js): your Sketchfab model, reduced to 8.9k triangles, colour textures only (512/256 px)
+    mp.traverse(o=>{ if (o.isMesh){ o.castShadow=true; for (const m of [].concat(o.material)){ m.metalness=0.3; m.roughness=0.55; m.color.multiplyScalar(1.35); m.needsUpdate=true; } } }); Assets.mp7=mp;
     // imported AR-15 and pump shotgun (assets/ar.js, assets/sg.js): grip at the origin, bore y≈0.07, muzzle toward -Z
     for (const sc of [ar,sg]) sc.traverse(o=>{ if (o.isMesh){ o.castShadow=true; for (const m of [].concat(o.material)){ m.metalnessMap=null; m.roughnessMap=null; m.metalness=Math.min(m.metalness,0.5); m.roughness=Math.max(m.roughness,0.4); m.needsUpdate=true; } } });
     Assets.ar15=ar; Assets.shotgun=sg;
@@ -296,17 +322,22 @@ function buildDrako(){
 const GUN_SPEC = {
   ar15:   {muzzle:[0,0.07,-0.41], sight:[0,0.099,-0.06], eye:0.3, support:[0,0.0,-0.255], railY:0.095, magRe:/mag/i, ironRe:/ironsight/i},
   shotgun:{muzzle:[0,0.071,-0.845], sight:[0,0.106,-0.14], eye:0.38, support:[0,0.02,-0.36], railY:null, magRe:null, ironRe:null},
+  sawedoff:{muzzle:[0,0.043,-0.53], sight:[0,0.066,-0.12], eye:0.32, support:[0,0.012,-0.27], railY:null, magRe:null, ironRe:null},
+  // MP7: sight = tip of the front post; adsRot tilts the gun so the post sits centred in the rear notch (eye on that line)
+  mp7:    {muzzle:[0,0.058,-0.25], sight:[0.00085,0.1251,-0.1356], eye:0.43, adsRot:[0,0,0], rearBlock:true, support:[0,0.012,-0.108], railY:null, magRe:/^mag$/, magExtRe:/^magext$/, ironRe:null,
+           vgrip:[0.001,0.036,-0.12], laser:[0.031,0.05,-0.15]},
+  taser:  {muzzle:[0,0.019,-0.175], sight:[0,0.05,-0.05], eye:0.36, support:[0,-0.02,-0.02], railY:null, magRe:null, ironRe:null},
 };
 function buildImportedGun(id){
   const G=new THREE.Group(), S=GUN_SPEC[id], src=Assets[id];
   const add=(geo,mat,x,y,z,rx=0,ry=0,rz=0,parent=G)=>{ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); m.rotation.set(rx,ry,rz); m.castShadow=true; parent.add(m); return m; };
-  const mag=new THREE.Group(), irons=new THREE.Group(); G.add(mag); G.add(irons);
+  const mag=new THREE.Group(), irons=new THREE.Group(), magExt=new THREE.Group(); G.add(mag); G.add(irons); G.add(magExt); magExt.visible=false;
   const mats=new Map(); src.updateMatrixWorld(true);
   src.traverse(o=>{ if (!o.isMesh) return;
     const m0=o.material; if (!mats.has(m0)){ const c=m0.clone(); c.userData.base=m0.color.clone(); mats.set(m0,c); }
     const mesh=new THREE.Mesh(o.geometry, mats.get(m0)); mesh.castShadow=true; mesh.applyMatrix4(o.matrixWorld);
-    let isMag=false; for (let p=o; p; p=p.parent) if (S.magRe && S.magRe.test(p.name)) isMag=true; if (S.magRe && S.magRe.test(m0.name)) isMag=true;
-    if (isMag) mag.add(mesh); else if (S.ironRe && S.ironRe.test(m0.name)) irons.add(mesh); else G.add(mesh); });
+    let isMag=false, isExt=false; for (let p=o; p; p=p.parent){ if (S.magRe && S.magRe.test(p.name)) isMag=true; if (S.magExtRe && S.magExtRe.test(p.name)) isExt=true; } if (S.magRe && S.magRe.test(m0.name)) isMag=true;
+    if (isExt) magExt.add(mesh); else if (isMag) mag.add(mesh); else if (S.ironRe && S.ironRe.test(m0.name)) irons.add(mesh); else G.add(mesh); });
   const dk=wmat('#111',0.6,0.4), blk=wmat('#202123',0.45,0.55), att={};
   const mk=(name,fn)=>{ const g=new THREE.Group(); g.name=name; fn(g); g.visible=false; G.add(g); att[name]=g; return g; };
   const mz=S.muzzle;
@@ -318,8 +349,15 @@ function buildImportedGun(id){
   }
   mk('suppressor', g=>{ add(cy(0.021,0.021,0.17,12),dk,0,mz[1],mz[2]-0.085,PI/2,0,0,g); add(cy(0.017,0.021,0.012,12),blk,0,mz[1],mz[2]-0.175,PI/2,0,0,g); });
   mk('compensator', g=>{ add(cy(0.016,0.016,0.05,8),blk,0,mz[1],mz[2]-0.02,PI/2,0,0,g); for (const dz of [0.0,-0.015,-0.03]) add(bx(0.034,0.004,0.006),dk,0,mz[1]+0.015,mz[2]+dz,0,0,0,g); });
-  mk('laser', g=>{ const z=S.support[2]-0.05; add(bx(0.018,0.022,0.045),dk,0.03,mz[1]-0.005,z,0,0,0,g); add(cy(0.006,0.006,0.006,8),wmat('#ff2a2a',0.3,0),0.03,mz[1]-0.005,z-0.025,PI/2,0,0,g); });
-  return {group:G, support:new V3(...S.support), muzzle:new V3(...mz), sight:new V3(...S.sight), parts:{mag, irons, att, mats:[...mats.values()]}};
+  const L=S.laser||[0.03, mz[1]-0.005, S.support[2]-0.05];
+  mk('laser', g=>{ if (S.laser) add(bx(0.006,0.012,0.04),blk,L[0]-0.006,L[1],L[2],0,0,0,g);   // rail clamp against the side of the gun
+    add(bx(0.018,0.022,0.045),dk,L[0],L[1],L[2],0,0,0,g); add(cy(0.006,0.006,0.006,8),wmat('#ff2a2a',0.3,0),L[0],L[1],L[2]-0.025,PI/2,0,0,g); });
+  if (S.rearBlock){ const m=wmat('#17181a',0.7,0.15);   // rear sight: the model's two thin posts become a solid block with a square notch (the front post sits in it)
+    add(bx(0.0213,0.0165,0.013),m,0.00085,0.11125,0.078,0,0,0,G); add(bx(0.0081,0.0056,0.013),m,-0.00575,0.1223,0.078,0,0,0,G); add(bx(0.0081,0.0056,0.013),m,0.00745,0.1223,0.078,0,0,0,G); }
+  if (S.vgrip){ const [x,y,z]=S.vgrip, poly=wmat('#121314',0.8,0.05);   // vertical grip: rail clamp + ribbed polymer grip hanging under the handguard
+    mk('vgrip', g=>{ add(bx(0.026,0.012,0.04),blk,x,y-0.004,z,0,0,0,g); add(cy(0.0135,0.0155,0.078,10),poly,x,y-0.049,z,0,0,0,g);
+      for (let k=0;k<4;k++) add(cy(0.0162,0.0162,0.004,10),dk,x,y-0.03-k*0.014,z,0,0,0,g); add(cy(0.017,0.015,0.008,10),dk,x,y-0.091,z,0,0,0,g); }); }
+  return {group:G, support:new V3(...S.support), muzzle:new V3(...mz), sight:new V3(...S.sight), parts:{mag, magStd:mag, magExt, irons, att, mats:[...mats.values()]}};
 }
 function buildKnife(){
   const G=new THREE.Group();
@@ -353,9 +391,12 @@ const HOLDS = {
   //            third-person grip offset (holdPivot space) | first-person hip | first-person ADS distance
   drako:  {tp:[0.07,-0.13,-0.19],  vm:[0.07,-0.165,-0.25],  ads:0.26, vmRot:[0,0.04,0]},
   ar15:   {tp:[0.07,-0.13,-0.19],  vm:[0.12,-0.19,-0.36],  ads:0.3, vmRot:[0.02,0.07,0]},
+  mp7:    {tp:[0.07,-0.12,-0.2],  vm:[0.11,-0.175,-0.3],  ads:0.43, vmRot:[0.02,0.06,0], vmFov:44},
   shotgun:{tp:[0.07,-0.13,-0.17],  vm:[0.11,-0.19,-0.3],  ads:0.36, vmRot:[0.02,0.06,0]},
   glock:  {tp:[0.06,-0.06,-0.47], vm:[0.12,-0.16,-0.36], ads:0.38, vmRot:[0.06,0.1,0.03], cant:0, vmFov:40},   // ADS: front sight dead centre, both hands visible below (two-hand wrap)   // hip: bottom-right, tilted up/inward; ADS: 32 cm, slight cant, viewmodel lens narrowed so the pistol reads big
   sniper: {tp:[0.07,-0.11,-0.15], vm:[0.08,-0.17,-0.2], ads:0.2,  vmRot:[0,0.03,0]},
+  sawedoff:{tp:[0.07,-0.12,-0.2], vm:[0.11,-0.18,-0.32], ads:0.34, vmRot:[0.03,0.07,0]},
+  taser:  {tp:[0.06,-0.06,-0.47], vm:[0.12,-0.16,-0.36], ads:0.38, vmRot:[0.06,0.1,0.03], vmFov:40},
   knife:  {tp:[0.22,-0.42,-0.32], vm:[0.16,-0.17,-0.36],  ads:0.34, vmRot:[0.35,0.25,0.35]},
 };
 
@@ -363,7 +404,7 @@ const HOLDS = {
 function createWeapon(id, cfg){
   let w;
   if (id==='drako'){ const d=buildDrako(); w={model:d.group, support:d.support, muzzle:d.muzzle, sight:d.sight, parts:d.parts}; }
-  else if (id==='ar15' || id==='shotgun'){ const d=buildImportedGun(id); w={model:d.group, support:d.support, muzzle:d.muzzle, sight:d.sight, parts:d.parts, mats:d.parts.mats}; }
+  else if (GUN_SPEC[id]){ const d=buildImportedGun(id); w={model:d.group, support:d.support, muzzle:d.muzzle, sight:d.sight, parts:d.parts, mats:d.parts.mats}; }
   else if (id==='knife'){ const d=buildKnife(); w={model:d.group, support:null, muzzle:d.muzzle, sight:d.sight, parts:d.parts}; }
   else if (id==='glock'){
     const W=wrapGlb(Assets.glock, 0.032, [-1.55,2.05,0]);
@@ -429,13 +470,15 @@ function applyWeaponConfig(w, cfg){
     if (M.wood.map!==want){ M.wood.map=want; M.wood.needsUpdate=true; }
     M.wood.color.set(!fur ? '#ffffff' : c.paint.furniture==='Dark walnut' ? '#7a5a48' : fur); if (!fur) M.wood.color.multiplyScalar(1.15);
     M.wood.roughness = woodLike?0.6:0.85; M.wood.metalness=0.05;
-  } else if (id==='ar15' || id==='shotgun'){
+  } else if (GUN_SPEC[id]){
     const a=w.parts.att, S=GUN_SPEC[id]; for (const k in a) a[k].visible=on.has(k);
     const scoped=on.has('scope15')||on.has('scope25'); if (w.parts.irons) w.parts.irons.visible=!scoped;
     if (scoped){ const T=ADS_TUNE[on.has('scope15')?'scope15':'scope25'], dy=(S.railY||0.113)-0.113; w.sight=new V3(T.sight[0],T.sight[1]+dy,T.sight[2]); w.adsDist=T.eye; w.adsRot=T.rot; w.optic=T.overlay?'overlay':'3d'; }
-    else { w.sight=new V3(...S.sight); w.adsDist=S.eye; w.adsRot=[0,0,0]; w.optic=null; }
+    else { w.sight=new V3(...S.sight); w.adsDist=S.eye; w.adsRot=S.adsRot||[0,0,0]; w.optic=null; }
+    if (S.magExtRe){ const ext=c.att.mag==='mag_ext'; w.parts.magStd.visible=!ext; w.parts.magExt.visible=ext; w.parts.mag=ext?w.parts.magExt:w.parts.magStd; w.parts.mag.userData.y0=0; }
+    w.vgripOn=!!(S.vgrip && on.has('vgrip')); w.support = w.vgripOn ? new V3(S.vgrip[0], S.vgrip[1]-0.05, S.vgrip[2]) : new V3(...S.support);
     const mz=new V3(...S.muzzle); w.muzzle = on.has('suppressor') ? mz.clone().add(new V3(0,0,-0.18)) : on.has('compensator') ? mz.clone().add(new V3(0,0,-0.045)) : mz;
-    w.laserFrom = new V3(0.03,S.muzzle[1]-0.005,S.support[2]-0.075);
+    w.laserFrom = S.laser ? new V3(S.laser[0],S.laser[1],S.laser[2]-0.03) : new V3(0.03,S.muzzle[1]-0.005,S.support[2]-0.075);
     const mt=paintValue(id,'metal',c), fin=paintValue(id,'finish',c);
     for (const m of w.mats){ const base=m.userData.base; if (mt){ m.color.set(mt).multiplyScalar(2.2); } else if (base) m.color.copy(base); m.roughness=fin.r; m.metalness=fin.m*0.7; }
   } else if (id==='sniper'){
@@ -457,7 +500,7 @@ let BluntAsset=null;
 function loadBluntAsset(){
   return new Promise((res)=>{
     const b64=(window.GLB||{}).blunt; if (!b64){ res(); return; }
-    const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+    GLBfree(b64); const bin=atob(b64), buf=new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
     new THREE.GLTFLoader().parse(buf.buffer,'',g=>{ BluntAsset=g.scene; res(); }, ()=>res());
   });
 }

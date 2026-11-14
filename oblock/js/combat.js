@@ -19,6 +19,9 @@ const FX = {
     this.boom=new THREE.Sprite(new THREE.SpriteMaterial({map:VM.flashTex,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending,color:'#ffe2b0'})); this.boom.visible=false; scene.add(this.boom);
     this.flashT=0; this.puffI=0; this.trI=0; this.boomT=0;
   },
+  // Taser wires: two thin lines from the muzzle to the hit point, flickering blue-white for half a second
+  wire(a,b,hit){ for (let k=0;k<2;k++){ const off=new V3((k?1:-1)*0.012,0,0); this.tracer(a.clone().add(off),b.clone().add(off.multiplyScalar(hit?0.5:4)),hit?'#bfe3ff':'#d8d8d8'); }
+    if (hit){ this.puff(b,'#9fd4ff',0.35,0.5); if (Perf.lights()) this.lightFlash(b,1.2); } },
   tracer(a,b,col){ const T=this.tracers[this.trI++%this.tracers.length]; const p=T.l.geometry.attributes.position.array; p.set([a.x,a.y,a.z,b.x,b.y,b.z]); T.l.geometry.attributes.position.needsUpdate=true; T.l.material.color.set(col||'#ffd9a0'); T.l.visible=true; T.t=0.05; },
   hole(p,n){ const fx=Perf.fx(), cap=fx==='minimal'?8:fx==='reduced'?20:this.holes.length;
     if (cap<this.holes.length) for (let i=cap;i<this.holes.length;i++) this.holes[i].visible=false;
@@ -46,31 +49,46 @@ const Smoke = {
 
 // ---------- Weapon state machine ----------
 const Arsenal = {
-  firearm:'drako', cur:'drako', def:WEAPON_DEFS.drako, ammo:{}, state:'idle', stateT:0, stateDur:0, pending:null, inserted:false, reloadSnd:null,
+  firearm:'drako', primary:'drako', secondary:'glock', melee:'knife', cur:'drako', def:WEAPON_DEFS.drako, ammo:{}, state:'idle', stateT:0, stateDur:0, pending:null, inserted:false, reloadSnd:null,
   ads:false, adsK:0, trigger:false, triggerEdge:false, nextFire:0, kick:0, bloom:0, lowerK:0, flashT:0,
   swing:0, swingDur:0, heavy:false, swingHit:false, recoilP:0, glockAuto:false, spray:0, lastShot:0, recoilDebt:0,
   // firearm the player may actually carry: allowed by the mode AND unlocked by level (validated by ProfileAuthority)
   usable(id){ id=Mode.allowedFirearm(id); const R=roomRules();
     if (R){ const ok=w=>R.weapons.includes(w)&&(R.unlocks==='all'||ProfileAuthority.canUse(w))&&(R.startWeapon!=='glock'||w==='glock'); if (ok(id)) return id; return R.weapons.find(ok)||R.weapons[0]; }
     return ProfileAuthority.canUse(id) ? id : 'glock'; },
+  // may this weapon be carried right now? (mode, room rules, owned / bought)
+  allowed(w){
+    if (w==='knife') return true; if (!WEAPON_DEFS[w]) return false;
+    if (w!=='taser' && Mode.allowedFirearm(w)!==w) return false; if (w==='taser' && Mode.cur==='backpack') return false;
+    const R=roomRules(); if (R && (!R.weapons.includes(w) || (R.startWeapon==='glock' && w!=='glock' && w!=='taser'))) return false;
+    return (R && R.unlocks==='all') || ProfileAuthority.canUse(w);
+  },
+  slots(){ return [this.primary, this.secondary, this.melee].filter(Boolean); },
   reset(){
-    this.firearm=this.usable(Loadout.firearm); this.ammo={}; if (!Mode.allowSwitch()) this.glockAuto=false;
-    for (const id of FIREARMS){ const d=weaponDef(id); this.ammo[id]={mag:d.mag, res:d.reserve}; }
+    // three slots from the saved loadout: primary, secondary, melee (knife or Taser); anything not allowed here is dropped
+    const pick=(id,list)=>this.allowed(id)?id:(list.find(w=>this.allowed(w))||null);
+    this.primary=pick(Loadout.firearm, PRIMARIES); this.secondary=pick(Loadout.secondary, SECONDARIES)||'glock';
+    if (this.primary===this.secondary) this.primary=null;
+    this.melee=this.allowed(Loadout.melee)?Loadout.melee:'knife';
+    this.firearm=this.primary||this.secondary; this.ammo={}; if (!Mode.allowSwitch()) this.glockAuto=false;
+    for (const id of [...FIREARMS,'taser']){ const d=weaponDef(id); this.ammo[id]={mag:d.mag, res:d.reserve}; }
     this.cur=null; this.state='idle'; this.equip(this.firearm, true);
   },
   refreshDef(){ this.def=weaponDef(this.cur, this.glockAuto); },
-  // change firearm mid-match (in-game loadout); the knife is always kept
+  // change a slot mid-match (in-game loadout): the weapon goes into its own slot (primary / secondary / melee)
   setFirearm(id){
-    if (!FIREARMS.includes(id)) return;
+    if (!WEAPON_SLOT[id] || id==='knife'){ if (id==='knife'){ this.melee='knife'; if (WEAPON_SLOT[this.cur]==='melee') this.equip('knife',true); } return; }
     if (Mode.allowedFirearm(id)!==id){ Bus.emit('toast',{t:'GLOCK ONLY IN '+Mode.title(),kind:'warn'}); return; }
     { const R=roomRules(); if (R && (!R.weapons.includes(id) || R.startWeapon==='glock'&&id!=='glock')){ Bus.emit('toast',{t:WEAPON_DEFS[id].name+' IS OFF IN THIS ROOM',kind:'warn'}); return; }
       if (!(R && R.unlocks==='all') && !ProfileAuthority.canUse(id)){ Bus.emit('toast',{t:WEAPON_DEFS[id].name+' · BUY IT IN LOADOUT ('+fmtCash(ProfileAuthority.price(id))+')',kind:'warn'}); return; } }
     this.cancelReload(); Snd.autoStop();
-    this.firearm=id; const d=weaponDef(id); if (!this.ammo[id]) this.ammo[id]={mag:d.mag,res:d.reserve}; if (Net.inMatch) Net.send({t:'equip', w:id});
-    if (this.cur!=='knife') this.equip(id, true); Bus.emit('weapon', this.cur);
+    const slot=WEAPON_SLOT[id], d=weaponDef(id); if (!this.ammo[id]) this.ammo[id]={mag:d.mag,res:d.reserve};
+    const was=this[slot]; this[slot]=id; if (slot!=='melee') this.firearm=id;
+    if (this.cur===was || (slot!=='melee' && WEAPON_SLOT[this.cur]!=='melee')) this.equip(id, true); Bus.emit('weapon', this.cur);
   },
   equip(id, instant){
-    if (id!=='knife' && id!==this.firearm) return false;
+    if (!id || !this.slots().includes(id)) return false;
+    if (WEAPON_SLOT[id]!=='melee') this.firearm=id;
     if (id===this.cur && this.state!=='switch') return false;
     if (Net.inMatch) Net.send({t:'equip', w:id});   // the server must know you hold the knife, or it rejects every stab
     this.cancelReload(); Snd.autoStop();
@@ -78,7 +96,9 @@ const Arsenal = {
     this.pending=id; this.state='switch'; this.stateT=0; this.stateDur=0.36; this.ads=false; this.swing=0; Snd.switchW();
     return true;
   },
-  cycle(){ this.equip(this.cur==='knife' ? this.firearm : 'knife'); },
+  // mouse wheel: primary -> secondary -> knife/Taser; key 1 swaps between the two guns; key 2 = knife/Taser
+  cycle(dir=1){ const L=this.slots(), i=L.indexOf(this.pending||this.cur); this.equip(L[(i+dir+L.length)%L.length]); },
+  swapGun(){ const c=this.pending||this.cur; if (c===this.primary && this.secondary) this.equip(this.secondary); else if (c===this.secondary && this.primary) this.equip(this.primary); else this.equip(this.firearm); },
   toggleFireMode(){
     if (this.cur!=='glock') return;
     if (!Mode.allowSwitch()){ Bus.emit('toast',{t:'SWITCH DISABLED IN '+Mode.title(),kind:'warn'}); return; }
@@ -90,12 +110,14 @@ const Arsenal = {
     if (Net.inMatch && a && this.state==='idle' && a.mag<d.mag && a.res>0) Net.send({t:'reload'});
     if (a && Dev.infAmmo) a.res=Math.max(a.res, d.mag*4);
     if (!a || this.state!=='idle' || a.mag>=d.mag || a.res<=0 || P.smoking || P.using) return;
-    this.state='reload'; this.stateT=0; this.stateDur=d.reloadTime; this.inserted=false; this.ads=false; Snd.autoStop();
-    this.reloadSnd=Snd.reload(this.cur); Bus.emit('reload',true);
+    const missing=d.mag-a.mag;   // sawed-off: one shell or both (two different reloads and sounds)
+    this.state='reload'; this.stateT=0; this.stateDur=(d.reload1 && missing===1) ? d.reload1 : d.reloadTime; this.inserted=false; this.ads=false; Snd.autoStop();
+    this.reloadSnd=Snd.reload(this.cur, missing); Bus.emit('reload',true);
+    if (this.cur==='sawedoff'){ const id=this.cur, n=missing; setTimeout(()=>{ if (this.state==='reload' && this.cur===id) playerEjectShells(id, n); }, 350); }
   },
   cancelReload(){ if (this.state==='reload'){ this.state='idle'; Snd.stop(this.reloadSnd,0.05); this.reloadSnd=null; Bus.emit('reload',false); } },
   canSprintPose(){ return this.state!=='reload' && this.swing<=0 && this.recoilP<0.01; },
-  canFire(){ return Game.state==='playing' && P.alive && !P.inCar && !P.ladder && !P.anim && !P.smoking && !P.using && !Perks.busy() && !P.search && !Mode.ended; },
+  canFire(){ return Game.state==='playing' && P.alive && !(P.stunT>0) && !P.inCar && !P.ladder && !P.anim && !P.smoking && !P.using && !Perks.busy() && !P.search && !Mode.ended; },
   update(dt){
     const d=this.def;
     this.kick=damp(this.kick,0,14,dt); this.flashT=Math.max(0,this.flashT-dt); this.bloom=damp(this.bloom,0,5,dt);
@@ -162,7 +184,7 @@ const Arsenal = {
     if (P.exhausted) spread*=1.25;
     spread*=Effects.spreadMul();                       // Zyn: +50% accuracy
     this.bloom=Math.min(0.05,this.bloom+d.recoil.p*0.3);
-    if (d.pellets) shootPellets(spread, d); else shootRay(spread, d);
+    if (d.kind==='taser') shootTaser(spread, d); else if (d.pellets) shootPellets(spread, d); else shootRay(spread, d);
     // recoil: vertical climb + weapon-specific horizontal pattern
     const pat=d.recoil.pattern, kmul=(1-this.adsK*0.35)*(P.crouch?0.75:1);
     const up=d.recoil.p*kmul*(this.spray<4?1:0.8);
@@ -226,8 +248,21 @@ function shootPellets(spread, d){
     else if (world.hit && !world.glass){ if (i%2===0) FX.hole(world.point, world.normal); if (i===0){ FX.puff(world.point,'#b8b0a0',0.3); Snd.impact(world.point); } }
   }
   playerShotFX(d);
-  if (Net.inMatch){ Net.shot('shotgun', P.pos, per.claims||[], null, {}); return; }
-  for (const [b,e] of per) b.damage(Math.round(e.dmg*StreakAuthority.dmgMul('player')), e.head, 'shotgun', e.dir);
+  if (Net.inMatch){ Net.shot(Arsenal.cur, P.pos, per.claims||[], null, {}); return; }
+  for (const [b,e] of per) b.damage(Math.round(e.dmg*StreakAuthority.dmgMul('player')), e.head, Arsenal.cur, e.dir);
+}
+/* Taser: one wire shot, hard limit d.range (20 m). Walls stop it. A hit stuns the target for d.stun seconds (a hit on an
+   already-stunned target does not restart the 5 s). Online the server checks shooter, target, distance, line of sight and
+   the cooldown, and decides the stun itself. */
+function shootTaser(spread, d){
+  const {o,dir}=cameraRay(spread), wall=raycastWorld(o,dir,d.range);
+  let best=wall.hit?wall.dist:d.range, hitBot=null;
+  for (const b of Bots.list){ if (!b.alive || !canHit(b)) continue; const h=b.rayHit(o,dir,best); if (h){ best=h.t; hitBot=b; } }
+  if (Net.inMatch) for (const e of Net.targets()){ if (!canHit(e)) continue; const h=e.rayHit(o,dir,best); if (h){ best=h.t; hitBot=e; } }
+  const end=o.clone().addScaledVector(dir,best), mz=muzzleWorld();
+  FX.wire(mz,end,!!hitBot);
+  if (Net.inMatch){ Net.shot('taser', P.pos, hitBot?[{id:Net.netIdOf(hitBot), head:false, d:+best.toFixed(2)}]:[], end, {}); return; }
+  if (hitBot){ Snd.zap(end); hitBot.damage(d.dmg, false, 'taser', dir); if (hitBot.alive) hitBot.stun(d.stun, dir); }
 }
 function meleeHit(heavy){
   const d=WEAPON_DEFS.knife, eye=new V3(P.pos.x,P.pos.y+P.height-0.15,P.pos.z);
@@ -245,7 +280,7 @@ function meleeHit(heavy){
 }
 
 // ---------- Ammo drops ----------
-const AMMO_COLORS={drako:'#c9a04a',glock:'#7fa8d8',sniper:'#9ed07a',ar15:'#d9d2c0',shotgun:'#c43a2a'};
+const AMMO_COLORS={drako:'#c9a04a',glock:'#7fa8d8',sniper:'#9ed07a',ar15:'#d9d2c0', mp7:'#c8c2b0',shotgun:'#c43a2a'};
 const Pickups = {
   list:[], pool:[],
   make(){ const g=new THREE.Group(); const box=new THREE.Mesh(new THREE.BoxGeometry(0.34,0.2,0.22), new THREE.MeshLambertMaterial({color:'#4b5233'}));
@@ -262,9 +297,10 @@ const Pickups = {
   near(){ let best=-1, bd=1.6; this.list.forEach((p,i)=>{ const d=Math.hypot(p.m.position.x-P.pos.x,p.m.position.z-P.pos.z); if (d<bd && Math.abs(p.m.position.y-P.pos.y)<1.2){ bd=d; best=i; } }); return best; },
   tryPick(){
     const i=this.near(); if (i<0) return false;
-    const p=this.list[i], fa=Arsenal.firearm, a=Arsenal.ammo[fa];
-    const add = p.type===fa ? p.amount : Math.ceil(weaponDef(fa).mag*0.5);  // other calibres convert to half a mag
-    a.res+=add; Bus.emit('pickup',{type:p.type, add, weapon:WEAPON_DEFS[fa].name}); Snd.click(0,1800,0.25); this.remove(i); return true;
+    const p=this.list[i], own=lootGuns().includes(p.type), w=own ? p.type : Arsenal.firearm;   // matching gun first; other calibres convert to half a mag
+    const add=addAmmo(w, own ? p.amount : Math.ceil(weaponDef(w).mag*0.5));
+    if (!add){ Bus.emit('toast',{t:WEAPON_DEFS[w].name+' AMMO FULL',kind:''}); return true; }
+    Bus.emit('pickup',{type:p.type, add, weapon:WEAPON_DEFS[w].name}); Snd.click(0,1800,0.25); this.remove(i); return true;
   },
   update(dt){ for (let i=this.list.length-1;i>=0;i--){ const p=this.list[i]; p.t+=dt; p.m.rotation.y+=dt*1.5; p.m.position.y=p.baseY+Math.sin(p.t*3)*0.03; if (p.t>40) this.remove(i); } },
   clear(){ while (this.list.length) this.remove(0); },
@@ -278,17 +314,26 @@ const Equip = {
   throwFlash(){
     if (!P.alive || P.flash<=0 || !Arsenal.canFire()) return;
     P.flash--; const dir=new V3(); camera.getWorldDirection(dir);
-    const o=new V3(P.pos.x,P.pos.y+P.height-0.2,P.pos.z).addScaledVector(dir,0.4);
-    const m=this.meshNade(); m.position.copy(o);
-    this.nades.push({m, pos:o, vel:dir.multiplyScalar(15).add(new V3(0,3,0)).add(P.vel.clone().multiplyScalar(0.5)), t:0, fuse:1.6});
-    Snd.swing();
+    const o=new V3(P.pos.x,P.pos.y+P.height-0.2,P.pos.z).addScaledVector(dir,0.4), v=dir.multiplyScalar(15).add(new V3(0,3,0)).add(P.vel.clone().multiplyScalar(0.5));
+    // online: the server checks the count and origin, then every client flies the same throw and applies the flash to itself
+    if (Net.inMatch) Net.send({t:'nade', o:[o.x,o.y,o.z].map(n=>+n.toFixed(2)), v:[v.x,v.y,v.z].map(n=>+n.toFixed(2))});
+    this.spawnNade(o, v, Net.inMatch); Snd.swing();
+  },
+  spawnNade(o, v, pend){ const m=this.meshNade(); m.position.copy(o); this.nades.push({m, pos:o.clone(), vel:v.clone(), t:0, fuse:1.6, pend}); },
+  // server messages
+  onNet(m){
+    const mine=m.by===Net.id;
+    if (m.t==='nade'){ if (mine){ P.flash=m.left; for (const n of this.nades) n.pend=false; } else this.spawnNade(new V3(...m.o), new V3(...m.v)); }
+    else if (m.t==='mine'){ if (mine) P.mine=m.left; const g=this.meshMine(); g.position.set(...m.p); this.mines.push({m:g, t:0, armed:false, owner:mine?'player':m.by, id:m.id}); Snd.click(0,900,0.25); }
+    else if (m.t==='mineoff'){ const i=this.mines.findIndex(x=>x.id===m.id); if (i>=0) this.removeMine(i); if (m.boom){ const p=new V3(...m.p); FX.explode(p,'#ffb36a',3.2); Snd.explosion(p); } }
+    else if (m.t==='reject'){ if (m.what==='nade'){ P.flash=m.left; for (let i=this.nades.length-1;i>=0;i--) if (this.nades[i].pend){ scene.remove(this.nades[i].m); this.nades.splice(i,1); } } else P.mine=m.left; }
   },
   placeMine(){
-    if (Net.inMatch){ Bus.emit('notice','Landmines are offline-only (their damage is not validated by the server yet)'); return; }
     if (!P.alive || P.mine<=0 || !P.grounded || P.inCar || P.ladder) return;
     const fx=-Math.sin(P.yaw), fz=-Math.cos(P.yaw), x=P.pos.x+fx*1.1, z=P.pos.z+fz*1.1;
     const {ground}=probeVertical(x,z,P.pos.y+0.5);
     if (Math.abs(ground-P.pos.y)>0.7 || !pointFree(x,z,ground+0.02,ground+0.5,0.2)){ Bus.emit('notice','No room to place a mine here'); return; }
+    if (Net.inMatch){ Net.send({t:'mine', p:[x,ground,z].map(n=>+n.toFixed(2))}); return; }   // the server places it (max 3 per player)
     if (this.mines.length>=3) this.removeMine(0);          // max 3 active in the world
     P.mine--; const m=this.meshMine(); m.position.set(x,ground,z);
     this.mines.push({m, t:0, armed:false, owner:'player'}); Snd.click(0,900,0.25);
@@ -324,8 +369,8 @@ const Equip = {
       const M_=this.mines[i]; M_.t+=dt;
       if (!M_.armed && M_.t>1.5){ M_.armed=true; Snd.mineArm(); }
       M_.m.userData.led.visible = M_.armed && (M_.t*2%1)<0.25;
-      if (M_.armed){ for (const b of Bots.list){ if (b.alive && Math.hypot(b.pos.x-M_.m.position.x,b.pos.z-M_.m.position.z)<1.3 && Math.abs(b.pos.y-M_.m.position.y)<1){ const p=M_.m.position.clone(); this.removeMine(i); this.detonate(p,M_.owner); break; } } }
-      if (M_.t>150 && this.mines[i]===M_) this.removeMine(i);   // cleanup
+      if (M_.armed && !Net.inMatch){ for (const b of Bots.list){ if (b.alive && Math.hypot(b.pos.x-M_.m.position.x,b.pos.z-M_.m.position.z)<1.3 && Math.abs(b.pos.y-M_.m.position.y)<1){ const p=M_.m.position.clone(); this.removeMine(i); this.detonate(p,M_.owner); break; } } }
+      if (M_.t>150 && !Net.inMatch && this.mines[i]===M_) this.removeMine(i);   // cleanup
     }
     if (this.flashK>0){ this.flashK=Math.max(0,this.flashK-dt/this.flashDur); }
   },

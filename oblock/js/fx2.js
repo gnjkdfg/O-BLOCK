@@ -8,13 +8,15 @@ const FLASH_TUNE = {
   drako:  {len:0.21, wid:0.1,  front:0.11,  dur:0.06,  light:2.6},
   sniper: {len:0.26, wid:0.11, front:0.12,  dur:0.06,  light:2.8},
   ar15:   {len:0.17, wid:0.085,front:0.095, dur:0.05,  light:2.3},
+  mp7:    {len:0.12, wid:0.06, front:0.07, dur:0.04,  light:1.8},
   shotgun:{len:0.3,  wid:0.16, front:0.16,  dur:0.07,  light:3.4},
+  sawedoff:{len:0.34, wid:0.2,  front:0.2,   dur:0.08,  light:3.8},
   scaleRand:0.2, adsScale:0.7, adsAlpha:0.6, lightRange:7,
 };
 const CASING_TUNE = { pool:30, life:4, fade:0.6, gravity:9.8, restitution:0.35, maxSounds:6,
-  eject:{glock:[0.03,0.055,-0.05], drako:[0.03,0.085,-0.07], sniper:[0.03,0.07,0.0], ar15:[0.03,0.075,-0.07], shotgun:[0.03,0.075,-0.11]},       // ejection port (weapon space)
-  size:{glock:[0.0045,0.019], drako:[0.0055,0.039], sniper:[0.006,0.05], ar15:[0.0048,0.045], shotgun:[0.0105,0.068]},
-  color:{shotgun:'#b3261e'} };
+  eject:{glock:[0.03,0.055,-0.05], drako:[0.03,0.085,-0.07], sniper:[0.03,0.07,0.0], ar15:[0.03,0.075,-0.07], mp7:[0.025,0.075,-0.03], shotgun:[0.03,0.075,-0.11], sawedoff:[0.0,0.05,-0.06]},       // ejection port (weapon space)
+  size:{glock:[0.0045,0.019], drako:[0.0055,0.039], sniper:[0.006,0.05], ar15:[0.0048,0.045], mp7:[0.0042,0.028], shotgun:[0.0105,0.068], sawedoff:[0.0105,0.068]},
+  color:{shotgun:'#b3261e', sawedoff:'#b3261e'} };
 
 function flashTextures(){
   const side=canvasTex(128,64,(g,w,h)=>{
@@ -128,6 +130,7 @@ function surfaceAt(x,z,y){
 // player's shot: flash on the viewmodel (first person / optic) or on the third-person gun, plus a casing from the ejection port
 function playerShotFX(d){
   const id=Arsenal.cur; if (id==='knife') return;
+  const breakAction = id==='sawedoff' || id==='taser';     // no casing per shot: the sawed-off drops its shells when opened to reload
   const spec=flashSpec(id, !!d.auto), fp=(Rig.mode==='first'||Rig.optic);
   let port, wq;
   if (fp && VM.cur){
@@ -139,5 +142,13 @@ function playerShotFX(d){
     if (!d.noFlash && !d.suppressed) MuzzleFlash.spawn('world', w.model.localToWorld(w.muzzle.clone()), q, spec, {});
     port=w.model.localToWorld(new V3(...(CASING_TUNE.eject[id]||[0,0,0]))); wq=q;
   }
-  Casings.eject(id, port, wq, P.pos.y, false);
+  if (!breakAction) Casings.eject(id, port, wq, P.pos.y, false);
+}
+// sawed-off reload: the action opens and the spent shells fall out
+function playerEjectShells(id, n){
+  const fp=(Rig.mode==='first'||Rig.optic), w=fp?VM.cur:PlayerChar.weapon; if (!w || !CASING_TUNE.eject[id]) return;
+  w.model.updateWorldMatrix(true,false); const q=w.model.getWorldQuaternion(new THREE.Quaternion());
+  for (let i=0;i<n;i++){ let port=w.model.localToWorld(new V3(...CASING_TUNE.eject[id]).add(new V3((i?0.012:-0.012),0,0))), wq=q;
+    if (fp){ port=camera.localToWorld(port); wq=camera.quaternion.clone().multiply(q); }
+    Casings.eject(id, port, wq, P.pos.y, false); }
 }
