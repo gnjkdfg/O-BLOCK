@@ -2,8 +2,17 @@
 
 The server is **authoritative**: it alone decides health, damage, kills, respawns, the ZA bag and hold times,
 match results, rewards (paid once per match), purchases/ownership, weapon unlocks, character choice, trunk loot,
-item use, car-hop cash and developer actions. Game clients only send requests, and every request is checked against
+item use, landmines, flashbang throws, Taser stuns, Gang Wars teams and developer actions. Game clients only send requests, and every request is checked against
 `shared.json` (the same weapon table, progression numbers, 15 spawn points and map colliders the game uses).
+
+## Saving progress (important on Render)
+
+Profiles are saved to **Postgres** when `DATABASE_URL` is set (free: Neon or Supabase), otherwise to `profiles.json`
+(atomic write + `.bak`). Render's free disk is wiped on every restart, so set `DATABASE_URL` there, plus
+`PROFILE_SECRET` (any long random text) for the signed backup. The log line `storage: postgres` confirms it.
+Clients only see "✓ PROGRESS SAVED" after the database has confirmed the write.
+
+Tests: `npm test` (protocol + progression; `TEST_DATABASE_URL=postgres://… node test-progress.js` also tests Postgres).
 
 ## Run it
 

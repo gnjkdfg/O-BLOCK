@@ -9,16 +9,16 @@ let pass = 0, fail = 0;
 const ok = (cond, name, extra) => { if (cond){ pass++; console.log('  ✓ ' + name); } else { fail++; console.log('  ✗ ' + name + (extra !== undefined ? '  → ' + JSON.stringify(extra) : '')); } };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function client(token){
+function client(token, extra){
   return new Promise(res => {
     const ws = new WebSocket('ws://127.0.0.1:' + PORT), c = { ws, inbox:[], waiters:[] };
     c.send = m => ws.send(JSON.stringify(m));
     c.next = (t, pred = () => true, ms = 3000) => new Promise((resolve) => {
       const i = c.inbox.findIndex(m => m.t === t && pred(m)); if (i >= 0) return resolve(c.inbox.splice(i, 1)[0]);
       const w = { t, pred, resolve }; c.waiters.push(w); setTimeout(() => { const k = c.waiters.indexOf(w); if (k >= 0){ c.waiters.splice(k, 1); resolve(null); } }, ms); });
-    c.drain = t => { c.inbox = c.inbox.filter(m => m.t !== t); };
+    c.drain = t => { const out = c.inbox.filter(m => m.t === t); c.inbox = c.inbox.filter(m => m.t !== t); return out; };
     ws.on('message', raw => { const m = JSON.parse(raw); const w = c.waiters.find(w => w.t === m.t && w.pred(m)); if (w){ c.waiters.splice(c.waiters.indexOf(w), 1); w.resolve(m); } else c.inbox.push(m); if (c.inbox.length > 400) c.inbox.splice(0, 200); });
-    ws.on('open', () => { c.send({ t:'hello', token, name:token.slice(0,6) }); res(c); });
+    ws.on('open', () => { c.send(Object.assign({ t:'hello', token, name:token.slice(0,6) }, extra)); res(c); });
   });
 }
 
@@ -27,7 +27,7 @@ function client(token){
   await sleep(700);
   try {
     console.log('connections and developer accounts');
-    const A = await client('devtoken-0123456789'), B = await client('playertoken-abcdefgh');
+    const A = await client('devtoken-0123456789'); let B = await client('playertoken-abcdefgh');
     const wa = await A.next('welcome'), wb = await B.next('welcome');
     ok(wa && wa.dev === true, 'developer account recognised from DEV_TOKENS');
     ok(wb && wb.dev === false && wb.profile.level === 1 && wb.profile.cash === 0, 'new player starts at level 1 with $0', wb && wb.profile);
@@ -103,6 +103,56 @@ function client(token){
     B.send({ t:'search', id:0 }); const sr = await B.next('reject', m => m.what === 'search'); ok(sr && /too far/.test(sr.why), 'searching a trunk from across the map is refused');
     const tr = S.trunks[0]; put(B, [tr.x, 0, tr.z]); await sleep(150); B.send({ t:'search', id:0 }); const lt = await B.next('loot'); ok(!!lt, 'trunk loot is rolled by the server', lt && lt.found);
     B.send({ t:'search', id:0 }); const again = await B.next('reject', m => m.what === 'search'); ok(again && /already/.test(again.why), 'a trunk can only be searched once per match');
+
+    console.log('MP7 ($3,000) and its 40-round extended magazine');
+    A.send({ t:'buy', item:'mp7' }); const nm7 = await A.next('reject', m => m.what === 'buy'); ok(nm7 && /not enough cash/.test(nm7.why), 'the MP7 costs $3,000 (not enough cash)');
+    A.send({ t:'dev', cmd:'addCash', arg:3150 }); await A.next('profile');
+    A.send({ t:'buy', item:'mp7' }); const bm7 = await A.next('profile', m => m.bought === 'mp7'); ok(bm7 && bm7.profile.owned.mp7, 'MP7 bought and saved to the profile', bm7 && bm7.profile.owned);
+    put(A, [-7, 0, -2]); await sleep(300); A.send({ t:'equip', w:'mp7' }); await sleep(250); B.drain('shotfx'); A.drain('reject');
+    const burst = async n => { for (let i = 0; i < n; i++){ A.send({ t:'shot', w:'mp7', o:[-7, 0, -2], hits:[] }); await sleep(75); } };
+    await burst(31); const e30 = await A.next('reject', m => m.why === 'empty', 600); ok(e30, 'MP7 factory magazine: 30 rounds (the 31st shot is refused)');
+    A.send({ t:'loadout', weapon:'mp7', mags:{ mp7:'mag_ext' } }); A.send({ t:'reload' }); await sleep(2300);
+    A.drain('reject'); await burst(30); const e40a = await A.next('reject', m => m.why === 'empty', 400); ok(!e40a, 'extended mag not owned: the server keeps the 30-round size', e40a);
+    A.send({ t:'buy', item:'att:mag_ext' }); await A.next('profile', m => m.bought === 'att:mag_ext'); A.send({ t:'reload' }); await sleep(2300); A.drain('reject');
+    await burst(41); const e40 = await A.next('reject', m => m.why === 'empty', 600); const fx = B.drain('shotfx').filter(m => m.by === wa.id && m.w === 'mp7').length;
+    ok(e40 && fx >= 40, 'owned extended mag: the MP7 holds 40 rounds online (41st refused)', { fx, e40 });
+    A.send({ t:'loadout', weapon:'sniper', mags:{} }); A.send({ t:'equip', w:'glock' }); await sleep(250);
+
+    console.log('equipment online (landmines + flashbangs, server-validated)');
+    put(B, [-7, 0, -5]); await sleep(200); A.drain('mine'); A.drain('mineoff'); A.drain('hit');
+    B.send({ t:'mine', p:[-7, 0, -15] }); const mf = await B.next('reject', m => m.what === 'mine'); ok(mf && /too far/.test(mf.why), 'a mine placed out of reach is refused');
+    B.send({ t:'mine', p:[-7, 0, -5.5] }); const mp = await A.next('mine'); ok(mp && mp.by === wb.id && mp.id > 0, 'a placed mine is shown to every player', mp);
+    B.send({ t:'mine', p:[-6, 0, -5] }); const m2 = await B.next('reject', m => m.what === 'mine'); ok(m2 && /no mines/.test(m2.why), 'the per-player mine count is enforced (room setting)');
+    await sleep(1800); put(A, [-7, 0, -4.4]); await sleep(150); put(A, [-7, 0, -6.5]);
+    const mb = await A.next('mineoff', m => mp && m.id === mp.id, 1500), mh = await A.next('hit', m => m.target === wa.id, 600);
+    ok(mb && mb.boom, 'an armed mine explodes when an enemy steps on it');
+    ok(mh && mh.by === wb.id && mh.dmg > 0 && mh.dmg < 130, 'mine damage falls off with distance and is credited to its owner', mh);
+    const mb2 = await A.next('mineoff', m => mp && m.id === mp.id, 500); ok(!mb2, 'a mine can only explode once');
+    B.send({ t:'nade', o:[-7, 1.5, -5], v:[0, 3, -15] }); const nd = await A.next('nade'); ok(nd && nd.by === wb.id && nd.left === 1, 'a flashbang throw is shared with every player', nd);
+    await sleep(900); B.send({ t:'nade', o:[20, 1.5, -5], v:[0, 3, -15] }); const no = await B.next('reject', m => m.what === 'nade'); ok(no && /origin/.test(no.why), 'a throw from somewhere else is refused');
+    B.send({ t:'nade', o:[-7, 1.5, -5], v:[0, 3, -15] }); await A.next('nade'); await sleep(900);
+    B.send({ t:'nade', o:[-7, 1.5, -5], v:[0, 3, -15] }); const n3 = await B.next('reject', m => m.what === 'nade'); ok(n3 && /no flashbangs/.test(n3.why), 'the flashbang count is enforced');
+    put(A, [-7, 0, -2]); await sleep(200);
+
+    console.log('reconnect after a dropped connection (30 s to rejoin the same match)');
+    put(A, [-7, 0, -2]); put(B, [-7, 0, -6]); await sleep(300); A.drain('hit'); A.drain('away'); A.drain('left');
+    const kB = (await A.next('snap', m => m.ents.some(x => x[0] === wb.id), 1500)).ents.find(x => x[0] === wb.id);
+    B.ws.terminate(); const aw = await A.next('away', m => m.id === wb.id && m.on); ok(aw && aw.secs === 30, 'a dropped player is announced as away, with 30 s to return', aw);
+    ok(!(await A.next('left', m => m.id === wb.id, 400)), 'their place in the match is kept (not removed)');
+    await sleep(250); A.drain('snap'); const sB = (await A.next('snap', m => true, 1500)).ents.find(x => x[0] === wb.id); ok(sB && sB[7] === 0, 'while away they are off the field (cannot be shot)', sB);
+    A.send({ t:'shot', w:'glock', o:[-7, 0, -2], hits:[{ id:wb.id, head:false, d:4 }] }); ok(!(await A.next('hit', m => m.target === wb.id, 500)), 'shooting an away player does nothing');
+    const X = await client('someone-else-entirely-xyz'); const wx = await X.next('welcome'); ok(wx && !wx.resumed, 'another account cannot take the seat');
+    X.ws.close();
+    const B2 = await client('playertoken-abcdefgh', { rejoin:true });
+    const w2 = await B2.next('welcome'), st2 = await B2.next('start');
+    ok(w2 && w2.resumed && w2.id === wb.id, 'the same account gets its seat back (same player id)', w2 && [w2.resumed, w2.id]);
+    const me2 = st2 && st2.ents.find(x => x.id === wb.id);
+    ok(st2 && st2.resume && st2.matchId && me2 && Math.abs(me2.pos[2] + 6) < 0.5, 'they rejoin the running match where they stood', me2);
+    const bk = await A.next('away', m => m.id === wb.id && !m.on); ok(bk, 'everyone is told they are back');
+    A.drain('snap'); const rB = (await A.next('snap', m => true, 1500)).ents.find(x => x[0] === wb.id); ok(rB && rB[7] === 1 && rB[9] === kB[9] && rB[10] === kB[10], 'alive again with the same kills and deaths', [kB, rB]);
+    put(B2, [-7, 0, -6]); await sleep(150);
+    A.send({ t:'shot', w:'glock', o:[-7, 0, -2], hits:[{ id:wb.id, head:false, d:4 }] }); ok(await A.next('hit', m => m.target === wb.id, 800), 'and they are back in the fight (can be hit)');
+    B = B2;
 
     console.log('match end and rewards');
     put(B, [-7, 0, -12]); put(A, rs.pos); await sleep(300);
@@ -210,6 +260,24 @@ function client(token){
     let gend = null; for (let i = 0; i < 8 && !gend; i++){ await sleep(160); F.send({ t:'shot', w:'glock', o:[0,0,0], hits:[{ id:gw.id, head:true, d:6 }] }); gend = await G.next('end', () => true, 120); }
     if (!gend) gend = await G.next('end', () => true, 1500);
     ok(gend && gend.winner === 'team' + T(fw.id), 'the first gang to the kill limit wins', gend && gend.winner);
+    console.log('Gang Wars custom teams (host-made, server-validated)');
+    const F2 = await client('gangplayer-three-ccccccc'), G2 = await client('gangplayer-four-ddddddd'); const fw2 = await F2.next('welcome'), gw2 = await G2.next('welcome');
+    F2.send({ t:'create', settings:{ mode:'gang', kills:0, time:0, friendlyFire:true, teams:[{ name:'east side', col:'#3fd46a', emblem:'♠', bots:1 }, { name:'west', col:'#bad', bots:1 }, { name:'<b>x</b>', emblem:'⚡', bots:0, max:2, start:'shotgun' }, {}, {}] } });
+    const cr = await F2.next('room'), T3 = cr && cr.settings.teams;
+    ok(T3 && T3.length === 4 && T3[0].name === 'EAST SIDE' && T3[0].col === '#3fd46a' && T3[1].col === '#4aa8ff' && T3[2].name === 'BXB' && T3[2].start === 'shotgun', 'team names / colours / emblems / gear are cleaned by the server (max 4 teams)', T3);
+    ok(cr && cr.settings.bots === 2 && cr.settings.friendlyFire === true && cr.settings.teamSwitch === false, 'bots come from each team\'s bot count; switching is locked by default', cr && cr.settings);
+    G2.send({ t:'join', code:cr.code }); await G2.next('room', m => m.players.length === 2);
+    F2.send({ t:'settings', settings:Object.assign({}, cr.settings, { teams:T3.slice(0, 3), assign:{ [fw2.id]:2, [gw2.id]:2 } }) }); await F2.next('room', m => m.settings.assign && m.settings.assign[gw2.id] === 2);
+    F2.send({ t:'start' }); const cs = await G2.next('start'), TT = id => cs.ents.find(e => e.id === id).team;
+    ok(cs && TT(fw2.id) === 2 && TT(gw2.id) === 2, 'the host\'s manual assignment is kept (no random teams)', cs && cs.ents.map(e => [e.id, e.team]));
+    ok(cs && cs.ents.filter(e => e.kind === 'bot').map(e => e.team).join() === '0,1', 'bots are placed on the teams the host chose', cs && cs.ents.map(e => [e.kind, e.team]));
+    ok(cs && cs.ents.find(e => e.id === fw2.id).w === 'shotgun', 'team starting equipment is applied', cs && cs.ents.find(e => e.id === fw2.id).w);
+    G2.send({ t:'team', team:0 }); const tl = await G2.next('reject', m => m.what === 'team'); ok(tl && /locked/.test(tl.why), 'teams are locked mid-match unless the host allows switching');
+    const p2 = cs.ents.find(e => e.id === fw2.id).pos; put(F2, p2); put(G2, [p2[0], 0, p2[2] + 4]); await sleep(300); F2.drain('hit');
+    F2.send({ t:'equip', w:'glock' }); await sleep(250);
+    F2.send({ t:'shot', w:'glock', o:p2, hits:[{ id:gw2.id, head:false, d:4 }] }); const fh = await F2.next('hit', m => m.target === gw2.id, 800);
+    ok(fh && fh.dmg > 0, 'friendly fire on: teammates can be hurt', fh);
+    F2.ws.close(); G2.ws.close();
     F.ws.close(); G.ws.close();
 
     console.log('profile backup (survives a server restart / wiped disk)');
