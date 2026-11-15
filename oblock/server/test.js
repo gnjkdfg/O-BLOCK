@@ -44,6 +44,9 @@ function client(token, extra){
     ok(bc && bc.profile.owned.cop && bc.profile.cash === 1000, 'buying the Cop costs $5,000 and is saved', bc && bc.profile);
     A.send({ t:'buy', item:'cop' }); const dup = await A.next('reject', m => m.what === 'buy');
     ok(dup && /already owned/.test(dup.why), 'cannot buy the same thing twice');
+    B.send({ t:'buy', item:'conur' }); const nc = await B.next('reject', m => m.what === 'buy');
+    ok(S.prog.price.conur === 10000 && S.characters.conur.price === 10000 && nc && /not enough cash/.test(nc.why), 'Conur McNugget costs $10,000');
+    ok(S.abilities.conur && S.abilities.conur.speedMul === 1.3 && S.abilities.conur.at === 10, 'Conur ability: +30% speed after a 10-kill streak');
     A.send({ t:'buy', item:'sniper' }); const bs = await A.next('reject', m => m.what === 'buy'); ok(bs && /unknown item/.test(bs.why), 'most guns are free: there is nothing to buy');
     A.send({ t:'buy', item:'ar15' }); const b15 = await A.next('reject', m => m.what === 'buy'); ok(b15 && /not enough cash/.test(b15.why), 'the AR-15 costs $10,000 (not enough cash)');
     B.send({ t:'buy', item:'att:scope25' }); const ba = await B.next('reject', m => m.what === 'buy'); ok(ba && /not enough cash/.test(ba.why), 'attachments cost cash too');
@@ -290,6 +293,67 @@ function client(token, extra){
     const forged = await raw('fifthplayer-xxxxxxxxx', { d:seal.d.replace('"cash":250', '"cash":99999'), s:seal.s }); ok(forged && !forged.restored, 'an edited backup is refused');
     const back = await raw('fifthplayer-xxxxxxxxx', seal); ok(back && back.restored && back.profile.cash === 250, 'after a wipe your cash and purchases come back', back && back.profile);
     srv2.kill(); try { fs.unlinkSync(PROF2); } catch (e) {}
+    { // ---- RUN THAT FADE
+    console.log('RUN THAT FADE + fists (server-decided punches, blocks, knockdowns, 1v1 fights)');
+    const X = await client('fadefighter-one-aaaaaaa'), Y = await client('fadefighter-two-bbbbbbb'), Z = await client('fadewatcher-ccccccccccc');
+    const wx = await X.next('welcome'), wy = await Y.next('welcome'), wz = await Z.next('welcome');
+    X.send({ t:'create', settings:{ mode:'fade', bots:4, weapons:['glock','ar15'] } }); const fr = await X.next('room');
+    ok(fr && fr.settings.mode === 'fade' && fr.settings.bots === 0 && fr.settings.flash === 0 && fr.settings.time === 0, 'Run That Fade room: no bots, no equipment, no time limit', fr && fr.settings);
+    Y.send({ t:'join', code:fr.code }); Z.send({ t:'join', code:fr.code }); await X.next('room', m => m.players.length === 3);
+    X.send({ t:'start' }); const fs0 = await Z.next('start'); const EN = id => fs0.ents.find(e => e.id === id);
+    ok(fs0 && fs0.fade && fs0.fade.state === 'wait' && fs0.ents.every(e => e.w === 'fists' && e.kind === 'player'), 'everyone starts with fists, no bots, waiting for the host', fs0 && fs0.ents.map(e => [e.kind, e.w]));
+    const AR = S.arena, ringR = p => Math.hypot(p[0] - AR.o[0], p[2] - AR.o[1]);
+    ok(fs0.ents.every(e => ringR(e.pos) > AR.fenceR + 1 && e.pos[1] === 0), 'players wait outside the cage, by the benches', fs0.ents.map(e => e.pos));
+    Y.send({ t:'fade', cmd:'start', a:wy.id, b:wz.id }); const nh = await Y.next('reject', m => m.what === 'fade'); ok(nh && /host/.test(nh.why), 'only the host picks fights');
+    X.send({ t:'fade', cmd:'start', a:wy.id, b:wz.id }); const cnt = await Z.next('fade', m => m.st.state === 'count');
+    ok(cnt && cnt.st.a === wy.id && cnt.st.b === wz.id, 'the host picks the two fighters (countdown)', cnt && cnt.st);
+    const ry = await Y.next('respawn', m => m.id === wy.id && m.pos[1] > 0.5), rz = await Z.next('respawn', m => m.id === wz.id && m.pos[1] > 0.5);
+    ok(ry && rz && Math.abs(ry.pos[1] - AR.mat) < 0.01 && Math.abs(ry.pos[0] - AR.corners[0][0]) < 0.01 && Math.abs(rz.pos[0] - AR.corners[1][0]) < 0.01, 'fighters are put on opposite sides of the mat', [ry && ry.pos, rz && rz.pos]);
+    Y.send({ t:'equip', w:'fists' }); Z.send({ t:'equip', w:'fists' }); X.send({ t:'equip', w:'fists' });
+    const yp = ry.pos, zp = [yp[0] + 1.4, yp[1], yp[2]]; put(Y, yp); put(Z, zp); put(X, [AR.spots[0][0], 0, AR.spots[0][1]]); await sleep(300);
+    Y.send({ t:'shot', w:'fists', o:yp, hits:[{ id:wz.id, head:false, heavy:false, d:1.4 }] }); const early = await Z.next('hit', m => m.target === wz.id, 500); ok(!early, 'no damage during the countdown');
+    await Z.next('fade', m => m.st.state === 'fight', 4000);
+    put(X, [AR.o[0] + 0.5, AR.mat, AR.o[1]]); const kicked = await X.next('respawn', m => m.id === wx.id, 1500); ok(kicked && ringR(kicked.pos) > AR.fenceR, 'a spectator inside the cage is moved back out', kicked && kicked.pos);
+    X.drain('reject'); X.send({ t:'shot', w:'fists', o:kicked.pos, hits:[{ id:wy.id, head:false, d:1 }] }); const sp = await X.next('reject', m => m.what === 'shot'); ok(sp && /not fighting/.test(sp.why), 'spectators cannot punch the fighters');
+    await sleep(400); Z.drain('hit');
+    Y.send({ t:'shot', w:'fists', o:yp, hits:[{ id:wz.id, head:false, heavy:false, d:1.4 }, { id:wz.id, head:false, d:1.4 }] }); const j = await Z.next('hit', m => m.target === wz.id);
+    ok(j && j.dmg === 12 && j.w === 'fists', 'a jab does 12 (one punch can only land once)', j);
+    Y.drain('reject'); Y.send({ t:'shot', w:'fists', o:yp, hits:[{ id:wz.id, head:false, heavy:false, d:1.4 }] }); const fast = await Y.next('reject', m => /too fast/.test(m.why), 500); ok(fast, 'punch cooldown is enforced', Y.drain('reject'));
+    await sleep(300); ok(!Z.drain('hit').length, 'the second hit in the same punch is ignored'); await sleep(100); Y.send({ t:'shot', w:'fists', o:yp, c:1, hits:[{ id:wz.id, head:false, heavy:true, d:1.4 }] }); const capH = await Z.next('hit', m => m.target === wz.id);
+    ok(capH && capH.dmg < 42, 'a claimed full charge is capped by the real time since the last punch', capH && capH.dmg); await sleep(200); ok(!Z.drain('stun').length, 'a half-charged punch does not knock down');
+    Z.send({ t:'block', on:true }); await sleep(200); await sleep(1100);
+    Y.send({ t:'shot', w:'fists', o:yp, c:1, hits:[{ id:wz.id, head:false, heavy:true, d:1.4 }] }); const bl = await Z.next('hit', m => m.target === wz.id);
+    // Z faces yaw 0 (-z); Y is at -x: not facing, so the block does not count
+    ok(bl && !bl.blocked && bl.dmg === 42, 'a block only works facing the punch (full charge lands: 42)', bl);
+    const kd = await Z.next('stun', m => m.id === wz.id, 800); ok(kd && kd.knock && kd.dur === 1.8, 'an unblocked full-charge punch knocks the target down', kd);
+    await sleep(2000); Z.send({ t:'st', p:zp, yaw:Math.PI/2, pitch:0 }); Z.send({ t:'block', on:true }); await sleep(1000);
+    Y.send({ t:'shot', w:'fists', o:yp, c:1, hits:[{ id:wz.id, head:false, heavy:true, d:1.4 }] }); const bf = await Z.next('hit', m => m.target === wz.id);
+    ok(bf && bf.blocked && bf.dmg === Math.round(42 * 0.25), 'blocking facing the punch cuts it to a quarter (no knockdown)', bf);
+    Z.send({ t:'block', on:false }); let hpz = bf ? bf.hp : 0, n = 0;
+    while (hpz > 0 && n++ < 20){ await sleep(400); Y.send({ t:'shot', w:'fists', o:yp, hits:[{ id:wz.id, head:false, heavy:false, d:1.4 }] }); const h = await Z.next('hit', m => m.target === wz.id, 600); if (h) hpz = h.hp; }
+    const res = await X.next('fade', m => m.st.state === 'result', 1500); ok(res && res.st.last && res.st.last.w === wy.id && res.st.last.l === wz.id && res.st.last.how === 'ko', 'knockout: the winner and loser are announced', res && res.st);
+    const back = await X.next('fade', m => m.st.state === 'wait', 5000); const ry2 = await X.next('respawn', m => m.id === wy.id && m.pos[1] < 0.5 && m.hp === 100, 3000);
+    ok(back && ry2 && ringR(ry2.pos) > AR.fenceR + 1 && ry2.hp === 100, 'after the fight both go back to the benches, healed', ry2);
+    await sleep(3200); X.send({ t:'fade', cmd:'next' }); const nx = await Z.next('fade', m => m.st.state === 'count');
+    ok(nx && [nx.st.a, nx.st.b].includes(wx.id), 'NEXT TWO puts the player who has waited longest in', nx && nx.st);
+    const quitter = nx.st.a === wx.id ? X : nx.st.a === wy.id ? Y : Z, qid = nx.st.a, oid = nx.st.b;
+    Z.drain('fade'); quitter.send({ t:'fade', cmd:'forfeit' }); const ff = await Z.next('fade', m => m.st.state === 'result'); ok(ff && ff.st.last.l === qid && ff.st.last.w === oid && ff.st.last.how === 'forfeit', 'a fighter can forfeit back to the waiting area', ff && ff.st);
+    console.log('mod menu (developer only, server-checked)');
+    await sleep(3800); X.drain('reject'); X.send({ t:'dev', cmd:'kill', arg:wy.id }); const nd = await X.next('reject', m => m.what === 'dev'); ok(nd && /not a developer/.test(nd.why), 'a normal player cannot use the kill button');
+    X.send({ t:'devauth', pw:'test-dev-pass-123' }); await X.next('devauth');
+    Y.drain('respawn'); X.send({ t:'dev', cmd:'kill', arg:wy.id }); const dk = await Z.next('kill', m => m.target === wy.id);
+    ok(dk && dk.w === 'mystery' && dk.by === null, 'a developer can kill a chosen player: nobody is told who did it, no reward', dk);
+    const rs = await Y.next('respawn', m => m.id === wy.id, 6000); ok(rs, 'the killed player respawns normally');
+    Y.drain('profile'); X.send({ t:'dev', cmd:'give', arg:{ id:wy.id, what:'cash', n:500 } }); const gc = await Y.next('gift'), gp = await Y.next('profile');
+    ok(gc && gc.what === 'cash' && gc.n === 500 && gp && gp.profile.cash >= 500, 'give: cash goes to their saved profile', [gc, gp && gp.profile.cash]);
+    X.send({ t:'dev', cmd:'give', arg:{ id:wy.id, what:'own:conur' } }); const go = await Y.next('profile', m => m.profile.owned.conur); ok(go, 'give: unlock a character for them');
+    X.send({ t:'dev', cmd:'give', arg:{ id:wy.id, what:'beer', n:2 } }); const gb = await Y.next('gift', m => m.what === 'beer'); ok(gb && gb.items.beer === 2, 'give: in-match items (2 beers)', gb);
+    X.send({ t:'dev', cmd:'give', arg:{ id:wy.id, what:'flash', n:3 } }); const gf = await Y.next('gift', m => m.what === 'flash'); ok(gf && gf.flash === 3, 'give: flashbangs', gf);
+    Y.send({ t:'dev', cmd:'give', arg:{ id:wy.id, what:'cash', n:99999 } }); const gn = await Y.next('reject', m => m.what === 'dev'); ok(gn && /not a developer/.test(gn.why), 'a normal player cannot give');
+    X.drain('reject'); X.send({ t:'dev', cmd:'give', arg:{ id:'p999', what:'cash', n:5 } }); const gx = await X.next('reject', m => m.what === 'dev'); ok(gx && /not in your match/.test(gx.why), 'only players in your match can be given things');
+    X.drain('reject'); X.send({ t:'dev', cmd:'kill', arg:'nobody' }); const nk = await X.next('reject', m => m.what === 'dev'); ok(nk && /no such/.test(nk.why), 'killing someone who is not there is refused');
+    X.ws.close(); Y.ws.close(); Z.ws.close();
+    }
     A.ws.close(); B.ws.close();
     const log = fs.readFileSync(path.join(__dirname, 'devlog.jsonl'), 'utf8').trim().split('\n').length;
     ok(log >= 2, 'developer actions were written to devlog.jsonl');

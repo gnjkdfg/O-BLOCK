@@ -35,7 +35,7 @@ const PROFILE_FILE = process.env.PROFILE_FILE || path.join(__dirname, 'profiles.
 const DEVLOG = path.join(__dirname, 'devlog.jsonl');
 const ALLOW_TELEPORT = process.env.ALLOW_TELEPORT === '1';   // automated tests only: skips the movement speed check
 const TICK = 1 / 20;                      // simulation + snapshot rate
-const RESPAWN = 3.5, MAX_SPEED = 13;      // m/s (sprint 7.4 * nic 1.35 ≈ 10, e-bike 9.5) + margin
+const RESPAWN = 3.5, MAX_SPEED = 16;      // m/s (sprint 7.4 * fists 1.18 * nic 1.35 * Conur 1.3 ≈ 15.3, e-bike 9.5) + margin
 
 // ------------------------------------------------------------------ profiles (persistent, server-side)
 // Stored by store.js: Postgres when DATABASE_URL is set (survives restarts on free hosting), otherwise an atomic JSON file.
@@ -44,7 +44,7 @@ const store = require('./store').createStore({ file:PROFILE_FILE, url:process.en
   onSaved:(tok, rev) => { for (const c of socketsOf(tok)) send(c, { t:'saved', rev }); },
   onFail:(tok, n, why) => { console.error('save failed (' + n + '):', why); for (const c of socketsOf(tok)) send(c, { t:'savefail', tries:n }); } });
 const saveProfiles = () => store.soon();
-const newProfile = () => ({ cash:0, xp:0, owned:{switch:false, jeff:false, cop:false}, paid:[], v6:true, history:[] });
+const newProfile = () => ({ cash:0, xp:0, owned:{switch:false, jeff:false, cop:false, conur:false}, paid:[], v6:true, history:[] });
 // recent matches (newest first): what was earned, the result, mode and difficulty
 function addHistory(p, h){ p.history = [Object.assign({ at:Date.now() }, h)].concat(p.history || []).slice(0, 20); }
 const levelOf = xp => 1 + Math.floor(Math.max(0, xp) / S.prog.xpPerLevel);
@@ -67,7 +67,7 @@ function restoreSeal(p, token, r){
     const d = JSON.parse(r.d); if (!Number.isFinite(d.xp) || !Number.isFinite(d.cash) || typeof d.owned !== 'object') return false;
     const pristine = p.xp === 0 && p.cash === 0 && !Object.values(p.owned || {}).some(Boolean);
     if (!(d.xp > p.xp || pristine)) return false;            // XP only goes up, so an old seal can't undo a newer purchase
-    p.xp = Math.max(0, d.xp); p.cash = Math.max(0, d.cash); p.owned = Object.assign({ switch:false, jeff:false, cop:false }, d.owned); p.v6 = true;
+    p.xp = Math.max(0, d.xp); p.cash = Math.max(0, d.cash); p.owned = Object.assign({ switch:false, jeff:false, cop:false, conur:false }, d.owned); p.v6 = true;
     saveProfiles(); return true;
   } catch (e){ return false; }
 }
@@ -119,12 +119,16 @@ function falloff(w, d){ const f=w.falloff; if (!f) return 1; if (d<=f[0]) return
 // ------------------------------------------------------------------ settings (validated, clamped)
 // Every host setting is validated and clamped here and only this cleaned copy is used and broadcast. Rewards can only be
 // reduced (Off / Half / Normal), never raised, so a private room can't be used to farm XP or cash.
-const FIREARMS_ALL = Object.keys(S.weapons).filter(k => k !== 'knife'), CHARS_ALL = Object.keys(S.characters);
-function cleanSettings(x){
-  x = x || {}; const mode = ['backpack','gang'].includes(x.mode) ? x.mode : 'dm';   // gang = Gang Wars (two teams)
+const FIREARMS_ALL = Object.keys(S.weapons).filter(k => k !== 'knife' && k !== 'fists'), CHARS_ALL = Object.keys(S.characters);
+// RUN THAT FADE: fists only, no bots, no limits (the host runs fights until they end the match)
+function cleanSettings(x){ const s = cleanSettings0(x);
+  if (s.mode === 'fade') Object.assign(s, { bots:0, botsOn:false, time:0, kills:0, respawnOn:true, respawnDelay:3, flash:0, mines:0, items:false, nic:false, abilities:false, startWeapon:'loadout' });
+  return s; }
+function cleanSettings0(x){
+  x = x || {}; const mode = ['backpack','gang','fade'].includes(x.mode) ? x.mode : 'dm';   // gang = Gang Wars (two teams)
   const pick = (v, list, def) => list.includes(v) ? v : def, int = (v, lo, hi, def) => Number.isFinite(+v) ? Math.max(lo, Math.min(hi, Math.round(+v))) : def;
   const bool = (v, def) => typeof v === 'boolean' ? v : def;
-  const allowedW = S.modes[mode === 'gang' ? 'dm' : mode].firearms;
+  const allowedW = S.modes[mode === 'gang' || mode === 'fade' ? 'dm' : mode].firearms;
   let weapons = Array.isArray(x.weapons) ? x.weapons.filter(w => allowedW.includes(w)) : allowedW.slice(); if (!weapons.includes('glock')) weapons.unshift('glock');   // the starter pistol everyone owns is always allowed
   let chars = Array.isArray(x.chars) ? x.chars.filter(c => CHARS_ALL.includes(c)) : CHARS_ALL.slice(); if (!chars.includes('tracksuit')) chars.unshift('tracksuit');
   let botsOn = x.botsOn !== false && int(x.bots, 0, 12, 5) > 0, bots = botsOn ? int(x.bots, 0, 12, 5) : 0, gang = null;
@@ -191,13 +195,18 @@ function startMatch(room){
       const t = a !== undefined && n[a] < T[a].max ? a : free(); e.team = t; n[t]++; e.owner.team = t;
       const sw = T[t].start; if (sw !== 'loadout' && st.weapons.includes(sw)){ e.w = e.gun = sw; e.mag = capOf(e, sw); e.res = S.weapons[sw].reserve; } } }
   else for (const c of room.clients) c.team = undefined;
+  if (st.mode === 'fade'){ M.fade = { state:'wait', a:null, b:null, t:0, last:null, line:{} }; for (const e of M.ents.values()){ e.w = 'fists'; e.gun = null; } }
   if (st.mode === 'backpack'){ const h = zaHome(st); M.za = { x:h.x, y:h.y, z:h.z, carrier:null, holdStart:0, hold:{}, groundT:0, atHome:true, home:h }; }
   room.match = M;
   for (const e of M.ents.values()) respawn(room, e);
-  broadcast(room, { t:'start', matchId:M.id, settings:st, you:null, ents:[...M.ents.values()].map(e => ({ id:e.id, kind:e.kind, name:e.name, char:e.char, look:e.look, team:e.team, tag:e.kind==='player'?e.owner.tag||'':'', w:e.w, pos:e.pos, yaw:e.yaw, hp:e.hp, owner:e.owner.id })) });
+  broadcast(room, { t:'start', matchId:M.id, settings:st, fade:fadeState(M), you:null, ents:[...M.ents.values()].map(e => ({ id:e.id, kind:e.kind, name:e.name, char:e.char, look:e.look, team:e.team, tag:e.kind==='player'?e.owner.tag||'':'', w:e.w, pos:e.pos, yaw:e.yaw, hp:e.hp, owner:e.owner.id })) });
 }
 function spawnFor(room, e){
   const M = room.match, st = room.settings; let pool = S.spawns;
+  if (M.fade){ const A = S.arena, F = M.fade, i = [F.a, F.b].indexOf(e.id);       // fighters: their corner on the mat; everyone else: by the benches
+    if (i >= 0 && (F.state === 'count' || F.state === 'fight')) return [...A.corners[i].slice(0, 2), A.corners[i][2], A.mat];
+    const used = new Set([...M.ents.values()].filter(o => o !== e).map(o => o.spot)); let k = 0; while (used.has(k) && k < A.spots.length - 1) k++; e.spot = k;
+    const sp = A.spots[k % A.spots.length]; return [sp[0], sp[1], sp[2], 0]; }
   if (st.mode === 'backpack' && st.spawns === 'far' && M.za){ const o = M.za.home; pool = S.spawns.slice().sort((a,b) => Math.hypot(b[0]-o.x,b[1]-o.z) - Math.hypot(a[0]-o.x,a[1]-o.z)).slice(0,8); }
   let best = pool[0], bs = -1e9;
   for (const s of pool){ let minD = 80; for (const o of M.ents.values()) if (o !== e && o.alive && (e.team === undefined || o.team !== e.team)) minD = Math.min(minD, Math.hypot(o.pos[0]-s[0], o.pos[2]-s[1]));
@@ -211,22 +220,61 @@ function releaseRide(room, e, at){
   if (at && Math.hypot(at[0]-r.x, at[2]-r.z) < 4){ r.x = +at[0]; r.y = +at[1]; r.z = +at[2]; r.yaw = +at[3] || r.yaw; }
   r.rider = null; r.lean = 0; broadcast(room, { t:'ride', id:r.id, rider:null, x:r.x, y:r.y, z:r.z, yaw:r.yaw });
 }
+// ------------------------------------------------------------------ RUN THAT FADE (1v1 fists in the cage)
+// The host picks two real players; they're put on opposite sides of the mat, a 3 s countdown runs, then only those two
+// can deal (or take) damage. A knockout, a forfeit or a fighter leaving ends it; the winner is shown, both go back to
+// the benches with full health, and the host picks the next fight. Anyone else found inside the cage is moved out.
+const fadeState = M => M.fade ? { state:M.fade.state, a:M.fade.a, b:M.fade.b, left:M.fade.state === 'count' ? +(M.fade.t - M.clock).toFixed(2) : 0, last:M.fade.last } : null;
+const fadeSend = room => broadcast(room, { t:'fade', st:fadeState(room.match) });
+const fighting = (M, e) => !!(M.fade && M.fade.state === 'fight' && e && (e.id === M.fade.a || e.id === M.fade.b));
+function fadeStart(room, a, b){
+  const M = room.match, F = M.fade, A = M.ents.get(a), B = M.ents.get(b);
+  if (!F || F.state === 'count' || F.state === 'fight' || a === b || !A || !B || A.kind !== 'player' || B.kind !== 'player' || A.away || B.away) return 'pick two players who are here';
+  F.a = a; F.b = b; F.state = 'count'; F.t = M.clock + 3; F.last = null;
+  for (const e of [A, B]){ e.blocking = false; e.line = M.clock; respawn(room, e); }      // full health, into their corner
+  fadeSend(room); return null;
+}
+function fadeEnd(room, winner, loser, how){
+  const M = room.match, F = M.fade; if (!F || (F.state !== 'count' && F.state !== 'fight')) return;
+  F.state = 'result'; F.t = M.clock + 3.5; F.last = winner ? { w:winner, l:loser, how } : null; fadeSend(room);
+}
+function tickFade(room){
+  const M = room.match, F = M.fade, A = S.arena; if (!F) return;
+  const fa = M.ents.get(F.a), fb = M.ents.get(F.b);
+  if (F.state === 'count' || F.state === 'fight'){
+    if (!fa || !fb || fa.away || fb.away){ fadeEnd(room, null, null, 'cancel'); }                  // a fighter dropped or left: no result
+    else if (F.state === 'count' && M.clock >= F.t){ F.state = 'fight'; fadeSend(room); }
+  } else if (F.state === 'result' && M.clock >= F.t){
+    F.state = 'wait'; const ids = [F.a, F.b]; F.a = F.b = null;
+    for (const id of ids){ const e = M.ents.get(id); if (e && e.alive) respawn(room, e); }          // back to the benches, healed (a KO'd fighter respawns normally)
+    fadeSend(room);
+  }
+  // nobody but the two fighters may be inside the cage (and fighters may not leave it)
+  for (const e of M.ents.values()){ if (!e.alive || e.away) continue;
+    const r = Math.hypot(e.pos[0] - A.o[0], e.pos[2] - A.o[1]), isF = (e.id === F.a || e.id === F.b) && (F.state === 'count' || F.state === 'fight');
+    if ((!isF && r < A.fenceR + 0.3 && e.pos[1] > 0.6) || (isF && (r > A.fenceR + 0.5 || e.pos[1] < 0.6))) respawn(room, e); }
+}
 function respawn(room, e){
-  const s = spawnFor(room, e); e.pos = [s[0], 0, s[1]]; e.yaw = s[2] || 0; e.alive = true; e.bluntCap = false; e.beer = 0; e.ab.active = 0; e.ab.ready = false;
+  const s = spawnFor(room, e); e.pos = [s[0], s[3] || 0, s[1]]; e.yaw = s[2] || 0; e.alive = true; e.bluntCap = false; e.beer = 0; e.ab.active = 0; e.ab.ready = false;
   if (e.nextTeam !== undefined){ e.team = e.nextTeam; e.nextTeam = undefined; if (e.owner && e.kind === 'player') e.owner.team = e.team; broadcast(room, { t:'teamset', id:e.id, team:e.team }); }
   if (S.weapons[e.w].slot === 'melee' && e.gun) e.w = e.gun; e.saved = {}; e.stunUntil = 0; e.flash = room.settings.flash; e.mines = room.settings.mines; e.hp = maxHp(e); e.mag = capOf(e, e.w); e.res = S.weapons[e.w].reserve; e.reloadUntil = 0; e.lastSt = Date.now();
   broadcast(room, { t:'respawn', id:e.id, pos:e.pos, yaw:e.yaw, hp:e.hp, w:e.w });
 }
-function damage(room, by, target, dmg, head, w){
+const FREE_MELEE = new Set(['knife', 'fists']);   // always carried, never bought
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function damage(room, by, target, dmg, head, w, blocked){
   const M = room.match; if (!target.alive || M.ended) return;
+  if (M.fade && !(fighting(M, by) && fighting(M, target))) return;     // RUN THAT FADE: only the two fighters, only during the fight
   if (by && by !== target && by.team !== undefined && by.team === target.team && !room.settings.friendlyFire) return;    // Gang Wars: friendly fire is a host setting (off by default)
   dmg = Math.round(dmg * (target.beer > 0 ? S.items.beer.dmgTaken : 1));
   target.hp = Math.max(0, target.hp - dmg); target.lastHurt = room.match.clock;
-  broadcast(room, { t:'hit', by:by.id, target:target.id, dmg, hp:target.hp, head:!!head, max:maxHp(target) });
+  broadcast(room, { t:'hit', by:by.id, target:target.id, dmg, hp:target.hp, head:!!head, max:maxHp(target), w:w || null, blocked:!!blocked });
   if (target.hp <= 0) kill(room, by, target, w, head);
 }
 function kill(room, by, target, w, head){
-  const M = room.match, st = room.settings; target.alive = false; target.deadT = 0; releaseRide(room, target); target.deaths++; target.ab.active = 0; target.ab.ready = false; target.streak = 0; target.nic = 0;
+  const M = room.match, st = room.settings;
+  if (fighting(M, target)) fadeEnd(room, target.id === M.fade.a ? M.fade.b : M.fade.a, target.id, 'ko');   // knocked out
+  target.alive = false; target.deadT = 0; releaseRide(room, target); target.deaths++; target.ab.active = 0; target.ab.ready = false; target.streak = 0; target.nic = 0;
   const teamKill = by && by !== target && by.team !== undefined && by.team === target.team;
   if (by && by !== target && !teamKill){ by.kills++; by.streak++; if (st.nic && by.streak % S.perks.nic.at === 0 && by.nic < S.perks.nic.max) by.nic++;
     { const A = st.abilities && S.abilities[by.char]; if (A && !by.ab.active && !by.ab.ready && by.streak >= A.at){ by.ab.ready = true; broadcast(room, { t:'abready', id:by.id, name:A.name, streak:by.streak }); } }
@@ -240,7 +288,7 @@ function kill(room, by, target, w, head){
       saveProfiles(); send(by.owner, { t:'profile', profile:pubProfile(p), why:farmed ? 'REPEAT KILL · NO REWARD' : lc ? 'LEVEL UP' : 'KILL', xp:kx, cash:kc + lc }); } }
   if (M.za && M.za.carrier === target.id){ M.za.carrier = null; M.za.x = target.pos[0]; M.za.y = Math.max(0, target.pos[1]); M.za.z = target.pos[2]; M.za.groundT = 0; }
   if (st.mode === 'gang' && by && by !== target && by.team !== undefined && !teamKill) M.teamKills[by.team]++;
-  broadcast(room, { t:'kill', by:by ? by.id : null, target:target.id, w, head:!!head, tk:M.teamKills || null });
+  broadcast(room, { t:'kill', by:by && w !== 'mystery' ? by.id : null, target:target.id, w, head:!!head, tk:M.teamKills || null });
   if (st.mode === 'dm' && st.kills > 0 && by && by.kills >= st.kills) return endMatch(room, by.id);
   if (st.mode === 'gang' && st.kills > 0 && by && by.team !== undefined && M.teamKills[by.team] >= st.kills) return endMatch(room, 'team' + by.team);
   // respawns off: last one standing wins (Deathmatch); in Za the hold-time leader wins once one player is left
@@ -280,7 +328,8 @@ function endMatch(room, winnerId){
 }
 function tick(room){
   const M = room.match; if (!M || M.ended) return; const st = room.settings, dt = TICK;
-  M.clock += dt;
+  M.clock += dt; if (M.fade) tickFade(room);
+  for (const e of M.ents.values()) e.blockLeft = e.blocking ? Math.max(0, (e.blockLeft ?? 6) - dt) : Math.min(6, (e.blockLeft ?? 6) + dt * 0.6);
   for (const e of M.ents.values()){
  e.beer = Math.max(0, e.beer - dt);
     if (e.reloadUntil && M.clock >= e.reloadUntil){ const n = Math.min(capOf(e, e.w) - e.mag, e.res); e.mag += n; e.res -= n; e.reloadUntil = 0; }
@@ -349,10 +398,11 @@ function validateShot(room, shooter, m){
   const M = room.match, W = S.weapons[m.w], now = M.clock;
   if (!W || m.w !== shooter.w) return 'wrong weapon';
   if (!shooter.alive) return 'dead';
+  if (room.match.fade && !fighting(room.match, shooter)) return 'not fighting';
   if (shooter.stunUntil > now) return 'stunned';
   if (shooter.kind === 'player' && !canUseIn(room, shooter.owner.profile, m.w)) return 'weapon locked';
-  if (m.w !== 'knife' && !room.settings.weapons.includes(m.w)) return 'weapon not allowed in this room';
-  if (W.kind === 'melee'){ if (now - shooter.lastShot < W.rate * 0.75) return 'too fast'; }
+  if (!FREE_MELEE.has(m.w) && !room.settings.weapons.includes(m.w)) return 'weapon not allowed in this room';
+  if (W.kind === 'melee'){ if (now - shooter.lastShot < (W.fist && shooter.lastHeavy ? W.heavyRate : W.rate) * 0.75) return 'too fast'; }
   else {
     const auto = m.w === 'glock' && m.auto; if (auto && shooter.kind === 'player' && !shooter.owner.profile.owned.switch) return 'switch not owned';
     if (auto && room.settings.mode === 'backpack') return 'switch disabled in this mode';
@@ -366,8 +416,11 @@ function validateShot(room, shooter, m){
 function applyShot(room, shooter, m){
   const M = room.match, W = S.weapons[m.w];
   const why = validateShot(room, shooter, m); if (why){ if (shooter.kind === 'player') send(shooter.owner, { t:'reject', what:'shot', why }); return; }
+  // fists: the charge is capped by the real time since this fighter's last punch (no instant full-power punches)
+  const sinceLast = M.clock - shooter.lastShot, fistC = W.fist ? clamp(Math.min(+m.c || 0, (sinceLast - 0.05) / W.charge), 0, 1) : 0;
   shooter.lastShot = M.clock; if (W.kind !== 'melee') shooter.mag--;
   const hits = (Array.isArray(m.hits) ? m.hits : []).slice(0, W.pellets);
+  if (W.fist) shooter.lastHeavy = !!(hits[0] && hits[0].heavy);
   const per = new Map(); let rejected = 0;
   for (const h of hits){
     const t = M.ents.get(h.id); if (!t || t === shooter || !t.alive){ rejected++; continue; }
@@ -376,15 +429,20 @@ function applyShot(room, shooter, m){
     if (d > range + slack || Math.abs(d - (+h.d || 0)) > 3.5){ rejected++; continue; }                    // claimed distance must match where the server has them
     const eye = [shooter.pos[0], shooter.pos[1] + 1.55, shooter.pos[2]], aim = [t.pos[0], t.pos[1] + (h.head ? 1.62 : 1.1), t.pos[2]];
     if (blocked(eye, aim) && blocked(eye, [t.pos[0], t.pos[1] + 1.62, t.pos[2]])){ rejected++; continue; }   // through a wall
-    let dmg = W.kind === 'melee' ? (h.heavy ? W.heavyDmg : W.dmg) : W.dmg * (h.head ? W.headMul : 1) * falloff(W, d);
-    const q = per.get(t) || { dmg:0, head:false }; q.dmg += dmg; q.head = q.head || !!h.head; per.set(t, q);
+    let dmg = W.fist ? (h.heavy ? W.heavyMin + (W.heavyDmg - W.heavyMin) * fistC : W.dmg) : W.kind === 'melee' ? (h.heavy ? W.heavyDmg : W.dmg) : W.dmg * (h.head ? W.headMul : 1) * falloff(W, d);
+    let guarded = false;
+    if (W.fist && t.blocking && t.blockLeft > 0){   // a block only works facing the punch
+      const fx = -Math.sin(t.yaw || 0), fz = -Math.cos(t.yaw || 0), dx = shooter.pos[0] - t.pos[0], dz = shooter.pos[2] - t.pos[2], L = Math.hypot(dx, dz) || 1;
+      if ((fx*dx + fz*dz) / L > 0.25){ guarded = true; dmg *= 0.25; } }
+    const q = per.get(t) || { dmg:0, head:false }; q.dmg += dmg; q.head = q.head || !!h.head; q.blocked = guarded; q.knock = W.fist && !!h.heavy && fistC >= 0.9 && !guarded; per.set(t, q);
   }
   for (const [t, q] of per){
     if (W.stun && !(t.team !== undefined && t.team === shooter.team)){   // Taser: the server decides the stun; a hit while stunned does not restart it
       if (!(t.stunUntil > M.clock)){ t.stunUntil = M.clock + W.stun; t.reloadUntil = 0; broadcast(room, { t:'stun', id:t.id, by:shooter.id, dur:W.stun }); } }
-    damage(room, shooter, t, q.dmg * dmgMul(shooter), q.head, m.w); }
+    damage(room, shooter, t, q.dmg * dmgMul(shooter), q.head, m.w, q.blocked);
+    if (q.knock && t.alive && !(t.stunUntil > M.clock)){ t.stunUntil = M.clock + 1.8; t.blocking = false; broadcast(room, { t:'stun', id:t.id, by:shooter.id, dur:1.8, knock:true }); } }   // knocked down (ragdoll), gets up after 1.8 s
   if (rejected && shooter.kind === 'player') send(shooter.owner, { t:'reject', what:'hits', why:rejected + ' hit(s) failed validation' });
-  broadcast(room, { t:'shotfx', by:shooter.id, w:m.w, o:m.o, e:m.e || null, sup:!!m.sup }, shooter.kind === 'player' ? shooter.owner : null);
+  broadcast(room, { t:'shotfx', by:shooter.id, w:m.w, o:m.o, e:m.e || null, sup:!!m.sup, heavy:W.fist ? !!shooter.lastHeavy : undefined }, shooter.kind === 'player' ? shooter.owner : null);
 }
 
 // ------------------------------------------------------------------ connections
@@ -424,7 +482,7 @@ function resume(ws){
   else if (room.settings.respawnOn) respawn(room, e);
   return () => {
     send(ws, roomInfo(room));
-    send(ws, { t:'start', resume:true, matchId:M.id, settings:room.settings, clock:+M.clock.toFixed(2), tk:M.teamKills || null,
+    send(ws, { t:'start', resume:true, matchId:M.id, settings:room.settings, fade:fadeState(M), clock:+M.clock.toFixed(2), tk:M.teamKills || null,
       ents:[...M.ents.values()].map(x => ({ id:x.id, kind:x.kind, name:x.name, char:x.char, look:x.look, team:x.team, tag:x.kind==='player'?x.owner.tag||'':'', w:x.w, pos:x.pos, yaw:x.yaw, hp:x.hp, owner:x.owner.id })) });
     for (const mn of M.mines) send(ws, { t:'mine', id:mn.id, by:mn.by, p:[mn.x, mn.y, mn.z], left:e.mines });
     if (!e.alive) send(ws, { t:'kill', by:null, target:e.id, w:'—', head:false, tk:M.teamKills || null });      // no-respawn match and they were already out
@@ -510,7 +568,7 @@ function handle(ws, m){
     case 'st': {                                 // own position (players) — speed-checked
       if (!M || !e || !e.alive || !Array.isArray(m.p)) return;
       const now = Date.now(), dt = Math.max(0.05, (now - e.lastSt) / 1000), d = Math.hypot(m.p[0]-e.pos[0], m.p[2]-e.pos[2]);
-      if (d > MAX_SPEED * dt + 1.5 && !ALLOW_TELEPORT){ send(ws, { t:'correct', pos:e.pos }); return; }
+      if (d > MAX_SPEED * (ws.devSpeed || 1) * dt + 1.5 && !ALLOW_TELEPORT){ send(ws, { t:'correct', pos:e.pos }); return; }
       e.pos = m.p.map(Number); e.yaw = +m.yaw || 0; e.pitch = +m.pitch || 0; e.flags = m.f | 0; e.lastSt = now;
       // riding: the vehicle travels with its rider (it must stay under them)
       if (e.ride && Array.isArray(m.v)){ const r = M.rides.find(v => v.id === e.ride);
@@ -544,11 +602,11 @@ function handle(ws, m){
       const miss = capOf(who, who.w) - who.mag; who.reloadUntil = M.clock + ((W.reload1 && miss === 1) ? W.reload1 : W.reloadTime) * 0.95;   // sawed-off: one shell reloads faster
       broadcast(room, { t:'rl', id:who.id, w:who.w, n:miss }); return;            // nearby players hear the reload
     }
-    case 'equip': { if (!M || !e || !S.weapons[m.w]) return; if (m.w !== 'knife' && (!canUseIn(room, ws.profile, m.w) || !room.settings.weapons.includes(m.w) || room.settings.startWeapon === 'glock' && m.w !== 'glock')) return send(ws, { t:'reject', what:'equip', why:'locked or not allowed' }); if (m.w !== e.w){
+    case 'equip': { if (!M || !e || !S.weapons[m.w]) return; if (M.fade && m.w !== 'fists') return; if (!FREE_MELEE.has(m.w) && (!canUseIn(room, ws.profile, m.w) || !room.settings.weapons.includes(m.w) || room.settings.startWeapon === 'glock' && m.w !== 'glock')) return send(ws, { t:'reject', what:'equip', why:'locked or not allowed' }); if (m.w !== e.w){
         // each gun keeps its own ammo: switching to the knife and back no longer refills (or empties) the gun
-        e.saved = e.saved || {}; if (e.w !== 'knife') e.saved[e.w] = { mag:e.mag, res:e.res };
+        e.saved = e.saved || {}; if (!FREE_MELEE.has(e.w)) e.saved[e.w] = { mag:e.mag, res:e.res }; e.blocking = false;
         e.w = m.w; e.reloadUntil = 0; if (S.weapons[m.w].slot !== 'melee') e.gun = m.w;
-        if (m.w !== 'knife'){ const sv = e.saved[m.w]; e.mag = sv ? sv.mag : capOf(e, m.w); e.res = sv ? sv.res : S.weapons[m.w].reserve; }
+        if (!FREE_MELEE.has(m.w)){ const sv = e.saved[m.w]; e.mag = sv ? sv.mag : capOf(e, m.w); e.res = sv ? sv.res : S.weapons[m.w].reserve; }
       } return; }
     case 'ability': {
       const who = m.id ? (room && room.host === ws && M ? M.ents.get(m.id) : null) : e; if (!M || !who || !who.alive) return;
@@ -576,6 +634,19 @@ function handle(ws, m){
       if ([...M.ents.values()].filter(x => x.kind === 'player' && (x.nextTeam ?? x.team) === t).length >= st.teams[t].max) return send(ws, { t:'reject', what:'team', why:'that team is full' });
       e.nextTeam = t; return send(ws, { t:'teamnext', team:t });
     }
+    case 'fade': {                               // RUN THAT FADE: host starts / stops fights; a fighter can forfeit
+      if (!M || !M.fade || !e) return; const F = M.fade;
+      if (m.cmd === 'forfeit'){ if (fighting(M, e) || (F.state === 'count' && (e.id === F.a || e.id === F.b))) fadeEnd(room, e.id === F.a ? F.b : F.a, e.id, 'forfeit'); return; }
+      if (ws !== room.host) return send(ws, { t:'reject', what:'fade', why:'only the host picks fights' });
+      if (m.cmd === 'stop') return fadeEnd(room, null, null, 'cancel');
+      let a = String(m.a || ''), b = String(m.b || '');
+      if (m.cmd === 'next'){ const line = [...M.ents.values()].filter(x => x.kind === 'player' && !x.away).sort((p, q) => (p.line || -1) - (q.line || -1)); a = line[0] && line[0].id; b = line[1] && line[1].id; }
+      const why = fadeStart(room, a, b); if (why) send(ws, { t:'reject', what:'fade', why }); return;
+    }
+    case 'block': {                              // fists: hold to block (works facing the punch, for about 6 s of holding, refills slowly)
+      if (!M || !e) return; const on = !!m.on && e.w === 'fists' && e.alive && !(e.stunUntil > M.clock); if (on === !!e.blocking) return;
+      e.blocking = on; broadcast(room, { t:'block', id:e.id, on }, ws); return;
+    }
     case 'mine': case 'nade': {                  // equipment: counts, reach and placement checked here
       if (!M || !e) return; const why = m.t === 'mine' ? placeMine(room, e, m) : throwNade(room, e, m);
       if (why) send(ws, { t:'reject', what:m.t, why, left:m.t === 'mine' ? e.mines : e.flash }); return;
@@ -587,7 +658,7 @@ function handle(ws, m){
       for (const k of ['beer','blunt','zyn']) if (Math.random() < S.loot[k]){ if (e.items[k] < S.items[k].max){ e.items[k]++; found.push(k); } else found.push(k + '-full'); }
       const ammo = {};
       if (Math.random() < S.loot.ammo) for (const w of new Set([ws.weapon, ws.sec, ws.melee])){   // each gun gets its own ammo type, capped
-        const W = S.weapons[w]; if (!W || w === 'knife') continue;
+        const W = S.weapons[w]; if (!W || FREE_MELEE.has(w)) continue;
         const cur = e.w === w ? e : (e.saved = e.saved || {}, e.saved[w] = e.saved[w] || { mag:capOf(e, w), res:W.reserve });
         const n = Math.max(0, Math.min(w === 'taser' ? 2 : W.mag, Math.round(W.reserve * 1.5) - cur.res)); cur.res += n; ammo[w] = cur.res;
         found.push(n > 0 ? 'ammo:' + w + ':' + n : 'ammo:' + w + '-full');
@@ -614,12 +685,34 @@ function handle(ws, m){
     }
     case 'dev': {                                // developer accounts only (DEV_TOKENS), every action logged
       if (!ws.dev) return send(ws, { t:'reject', what:'dev', why:'not a developer account' });
+      const log = x => fs.appendFile(DEVLOG, JSON.stringify(Object.assign({ t:new Date().toISOString(), token:ws.token.slice(0,6) + '…', cmd:m.cmd }, x)) + '\n', () => {});
+      if (m.cmd === 'speed'){ ws.devSpeed = Math.min(3, Math.max(1, +m.arg || 1)); log({ arg:ws.devSpeed }); return; }   // speed hack: movement check widened for this account only
+      if (m.cmd === 'kill'){                     // kill a player or bot in your match (counts as their own death: no reward)
+        const t = M && M.ents.get(String(m.arg)); if (!t || !t.alive || t.away) return send(ws, { t:'reject', what:'dev', why:'no such player alive' });
+        log({ arg:t.id, name:t.name }); t.hp = 0; kill(room, t, t, 'mystery'); return; }   // nobody is told who did it
+      if (m.cmd === 'give'){                     // give a player in your match cash, a purchase or in-match items
+        const a = m.arg || {}, t = M && M.ents.get(String(a.id)), n = Math.floor(+a.n || 0), what = String(a.what || '');
+        if (!t || t.kind !== 'player' || !t.owner || !t.owner.profile) return send(ws, { t:'reject', what:'dev', why:'that player is not in your match' });
+        const tp = t.owner.profile, gift = { t:'gift', what, n };
+        if (what === 'cash'){ if (n < 1 || n > 1000000) return send(ws, { t:'reject', what:'dev', why:'cash: 1 to 1,000,000' }); tp.cash += n; }
+        else if (what.startsWith('own:')){ const k = what.slice(4); if (S.prog.price[k] === undefined) return send(ws, { t:'reject', what:'dev', why:'unknown item' }); if (tp.owned[k]) return send(ws, { t:'reject', what:'dev', why:'they already own it' }); tp.owned[k] = true; }
+        else if (S.items[what]){ if (!t.alive) return send(ws, { t:'reject', what:'dev', why:'they are dead' }); t.items[what] = Math.min(S.items[what].max, t.items[what] + Math.max(1, n)); }
+        else if (what === 'flash' || what === 'mines'){ if (!t.alive) return send(ws, { t:'reject', what:'dev', why:'they are dead' }); t[what] = Math.min(10, (t[what] || 0) + Math.max(1, n)); }
+        else if (what === 'ammo'){ if (!t.alive) return send(ws, { t:'reject', what:'dev', why:'they are dead' }); gift.ammo = {};
+          for (const w of new Set([t.owner.weapon, t.owner.sec])){ const W = S.weapons[w]; if (!W || FREE_MELEE.has(w)) continue;
+            const cur = t.w === w ? t : (t.saved = t.saved || {}, t.saved[w] = t.saved[w] || { mag:capOf(t, w), res:W.reserve }); cur.res = Math.max(cur.res, Math.round(W.reserve * 1.5)); gift.ammo[w] = cur.res; } }
+        else return send(ws, { t:'reject', what:'dev', why:'unknown gift' });
+        log({ to:t.id, name:t.name, what, n });
+        Object.assign(gift, { items:t.items, flash:t.flash, mines:t.mines }); send(t.owner, gift);
+        if (what === 'cash' || what.startsWith('own:')){ saveProfiles(); send(t.owner, { t:'profile', profile:pubProfile(tp) }); }
+        return send(ws, { t:'devok', what, name:t.name });
+      }
       const p = ws.profile, before = { cash:p.cash, xp:p.xp }, a = m.arg;
       if (m.cmd === 'unlockAll'){ for (const k in S.prog.price) p.owned[k] = true; }
       else if (m.cmd === 'setLevel') p.xp = (Math.max(1, a | 0) - 1) * S.prog.xpPerLevel;
       else if (m.cmd === 'setXP') p.xp = Math.max(0, a | 0);
       else if (m.cmd === 'addCash') p.cash += Math.max(0, a | 0);
-      else if (m.cmd === 'reset'){ p.cash = 0; p.xp = 0; p.owned = { switch:false, jeff:false, cop:false }; }
+      else if (m.cmd === 'reset'){ p.cash = 0; p.xp = 0; p.owned = { switch:false, jeff:false, cop:false, conur:false }; }
       else return send(ws, { t:'reject', what:'dev', why:'unknown command' });
       fs.appendFile(DEVLOG, JSON.stringify({ t:new Date().toISOString(), token:ws.token.slice(0,6) + '…', cmd:m.cmd, arg:a, before, after:{ cash:p.cash, xp:p.xp } }) + '\n', () => {});
       saveProfiles(); return send(ws, { t:'profile', profile:pubProfile(p) });
