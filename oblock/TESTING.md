@@ -1,3 +1,35 @@
+# O-Blick v0.10.2 — mod menu: give, mysterious kills; body fix
+
+- ✅ Mod menu GIVE (online, in your private match, developer sign-in checked by the server): pick a player (or yourself) and give cash ($1–1,000,000, saved to their profile), any unlock (characters, guns, Switch, attachments), beer / blunt / zyn, flashbangs, mines or an ammo refill; they get a "YOU RECEIVED …" message; every gift is logged
+- ✅ Mod menu KILL is now a mysterious death: no killer or weapon is sent to anyone; the kill feed says "NAME died", their death screen says "You died"
+- ✅ Cop / Conur body: the waist and lower torso were tied to the forearm/hand bones and got torn when the arm came up to a gun; now kept on the body (0 torso vertices pulled, checked front/back/side)
+- Tests: server 137/137 (new: give cash/unlock/beer/flashbangs, non-developer refused, player not in the match refused, kill hides the killer); browser 2-player: give cash + beer, mysterious kill (death screen + both kill feeds), no page errors
+
+---
+
+# O-Blick v0.10.1 — Conur ability, body fix, mod menu
+
+- ✅ Cop / Conur no longer lose part of the torso when holding a gun: torso vertices the models tied to the upper-arm bones are moved to the chest/spine at load (all characters; verified 0 left in preview and in-match models)
+- ✅ Conur McNugget costs $10,000 (server-checked); ability +30% SPEED after a 10-kill streak (Y), until you die (player 4.37 → 5.68 m/s, bots too); server movement check widened to match
+- ✅ "Bots target you" removed from Settings; mod menu now has: Bots don't attack me, Speed hack (x1.3–x3, the server allows it for that developer only), Kill (pick any player or bot; online the server does it, no reward, normal respawn)
+- ✅ Tidy-up: 12 unused functions/constants removed (one built a texture at every startup)
+- Tests: server 131/131 (new: Conur price + ability, kill button developer-only, kill works, bad target refused); browser: mod menu (bots off, speed x2 = 8.74 m/s, kill bot), Conur ability, offline fists, 3-player Run That Fade, reconnect; no page errors
+
+---
+
+# O-Blick — Fist fighting, Run That Fade, Conur McNugget
+
+- ✅ Fists (equipment slot, replaces the knife when picked; knife stays the default; saved with the loadout; free): tap = jab 12, hold = charged heavy 16→42 over 0.8 s with a charge bar, auto-throws at 1.4 s (no endless charging), F (hold) = block facing the punch (damage ×0.25, drains stamina, slows you); faster on your feet than the knife (×1.18 vs ×1.08)
+- ✅ Full-charge unblocked punch knocks the target down (ragdoll, gets up after 1.8 s, no twitching); flinch, punch/thud/slap sounds, screen jolt when hit
+- ✅ Server checks every punch: cooldown, real charge time (a faked full charge is capped), reach, line of sight (no hits through the cage or walls), one landing per punch, block direction
+- ✅ RUN THAT FADE (private matches only): underground room with your octagon cage, 8 benches, hanging lamp; no bots, fists only, no equipment; host picks two players from the pause menu (or NEXT TWO IN LINE), 3 s countdown, fighters placed on opposite sides of the mat; spectators sit (F) and watch (V = fight camera), cannot punch and are moved out if they get in the cage; KO or forfeit shows the winner and loser, both go back to the benches healed; a fighter leaving cancels the fight; leaving the match returns to the normal game
+- ✅ Conur McNugget: new free character (textured, 15k triangles, 0.6 MB, loaded in the background), works in the character select, as bots, online and in Run That Fade
+- ✅ New menu click sound (quiet), "woop" police siren replaces the distant siren at the same volume
+- Fixed while testing: a fists change had broken every gun hit on the server (a name clash) — caught by the old tests; dying with only fists crashed the death screen
+- Tests: server 125/125 (21 new fists/Run That Fade checks), progress 20/20; browser: offline fists (jab/heavy/knockdown/block/auto-throw), Conur preview and in match, 3-player online Run That Fade (pick fighters, countdown, jab 12, blocked heavy 11, full charge 42 + knockdown seen by both, KO result, back to benches healed, spectator can't punch, bench sit + fight camera, leave), no page errors
+
+---
+
 # O-Blick — visibility, aim assist, MP7 sights/sound, music, performance
 
 - ✅ Outlines: thin line round other characters (red = enemy; team colours in Gang Wars), ordinary depth-tested geometry so walls/fences/cars hide it; no ray casts or post-processing; setting to turn off; off in Super Performance Mode
