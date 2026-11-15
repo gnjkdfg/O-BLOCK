@@ -11,13 +11,15 @@
    the match server online), then activated manually. One activation per unlock; it stays on until you die or the
    match ends (no timer, no cooldown). Dying resets the streak and the readiness.
      Blood Hound Lil Jeff — TRIPLE HEALTH: max health x3 (ski mask on).
-     Cop                  — DOUBLE DAMAGE: firearm and melee damage x2. */
+     Cop                  — DOUBLE DAMAGE: firearm and melee damage x2.
+     Conur McNugget       — SPEED: +30% movement speed. */
 const PERKS = {
   nic: {name:'TAP THE NIC', at:5, dur:10, heal:0.30, speed:1.35, stamina:0.8, max:3, action:'nic'},
 };
 const CHAR_ABILITIES = {
   jeff:{id:'triple', name:'TRIPLE HEALTH', at:10, hpMul:3},
   cop: {id:'double', name:'DOUBLE DAMAGE', at:10, dmgMul:2},
+  conur:{id:'speed', name:'+30% SPEED', at:10, speedMul:1.3},
 };
 const StreakAuthority = {
   e:{},                         // entity id -> state
@@ -65,7 +67,7 @@ const StreakAuthority = {
   invulnerable(){ return false; },
   // the Nic effect only counts once it has landed (end of the hit), for exactly PERKS.nic.dur seconds
   nicOn(id){ const s=this.e[id]; return !!(s && s.active.nic>0 && s.active.nic<=PERKS.nic.dur); },
-  speedMul(id){ return this.nicOn(id) ? PERKS.nic.speed : 1; },
+  speedMul(id){ const s=this.e[id], A=s&&CHAR_ABILITIES[s.charId]; return (this.nicOn(id) ? PERKS.nic.speed : 1) * (A && A.speedMul && s.ab.active ? A.speedMul : 1); },
   staminaMul(id){ return this.nicOn(id) ? PERKS.nic.stamina : 1; },
   ability(id){ const s=this.e[id]; return s ? CHAR_ABILITIES[s.charId]||null : null; },
   abilityActive(id){ const s=this.e[id]; return !!(s && s.ab.active); },
@@ -162,10 +164,6 @@ function vaporCloud(k){
   const n=Math.round(9*k);
   for (let i=0;i<n;i++) setTimeout(()=>{ const p=base.clone().add(new V3(rr(-0.08,0.08),rr(-0.04,0.05),rr(-0.08,0.08)));
     Smoke.puff(p, (fp?0.55:0.8)*k+0.15, {life:rr(1.6,2.3), v:fwd.clone().multiplyScalar(rr(0.25,0.55)).add(new V3(rr(-0.08,0.08),rr(0.12,0.3),rr(-0.08,0.08))), alpha:fp?0.32:0.55}); }, i*45);
-}
-function nicTipWorld(){
-  const fp = Rig.mode==='first' || Rig.optic, n = fp ? VM.nic : PlayerChar.nic; if (!n || !n.visible) return null;
-  const p=new V3(0,0.05,0); n.localToWorld(p); return fp ? camera.localToWorld(p) : p;
 }
 // Nic device (imported model, assets/nic.js)
 let NicAsset=null;

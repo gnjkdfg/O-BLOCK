@@ -154,7 +154,7 @@ const Game = {
     UI.toast(Mode.label(),'obj'); Pings.list=[];
   },
   pause(){ if (this.state!=='playing') return; this.state='pause'; if (document.pointerLockElement) document.exitPointerLock();   // free the mouse without needing Esc (Esc also leaves fullscreen on Chromebooks)
-    Snd.uiSfx('open'); Arsenal.trigger=false; Arsenal.ads=false; Snd.autoStop(); for (const k in Input.down) Input.down[k]=false; UI.tabHeld=false; UI.scoreboard(false); UI.show('pause'); $('#hud').style.display='block'; Net.pauseTeams&&Net.pauseTeams(); },
+    Snd.uiSfx('open'); Arsenal.trigger=false; Arsenal.ads=false; Snd.autoStop(); for (const k in Input.down) Input.down[k]=false; UI.tabHeld=false; UI.scoreboard(false); UI.show('pause'); $('#hud').style.display='block'; Net.pauseTeams&&Net.pauseTeams(); Arena.pauseMenu(); },
   resume(){ Mode._lastNow=null; Snd.uiSfx('close'); this.state='playing'; UI.show(null); requestLock(); },
   toMenu(){ ProfileAuthority.leaveMatch(); if (Net.inMatch){ Net.leaveMatch(); if (Net.room){ this.state='online'; this.go('online'); Lobby.render(); LaserBeam.hide(); $('#death').style.display='none'; Snd.autoStop(); if (document.pointerLockElement) document.exitPointerLock(); return; } } this.state='main'; this.go('main'); LaserBeam.hide(); $('#death').style.display='none'; Snd.autoStop(); Snd.breath(0); Snd.slideStop(); Snd.playMusic('song_menu'); if (document.pointerLockElement) document.exitPointerLock(); },
   showEnd(name){
@@ -250,7 +250,8 @@ function pressAction(a){
   const alive=P.alive && !Mode.ended;
   switch(a){
     case 'jump': P.jumpQueued=true; break;
-    case 'interact': interact(); break;
+    case 'interact': if (!(Fists.active() && Binds.block===Binds.interact && !$('#prompt')._t)) interact(); break;   // fists out and nothing to use here: F blocks instead
+    case 'block': if (alive && Fists.active() && !(Binds.block===Binds.interact && $('#prompt')._t)) Fists.setBlock(true); break;
     case 'reload': Arsenal.reload(); break;
     case 'firearm': if (alive) Arsenal.swapGun(); break;              // primary <-> secondary
     case 'knife': if (alive) Arsenal.equip(Arsenal.melee); break;     // knife, or the Taser if equipped
@@ -264,7 +265,7 @@ function pressAction(a){
     case 'thermal': Thermal.toggle(); break;
     case 'nic': Perks.use('nic'); break;
     case 'ability': Perks.use('ability'); break;
-    case 'camera': Rig.toggle(); break;
+    case 'camera': if (Arena.seat) Arena.watch=!Arena.watch; else Rig.toggle(); break;
     case 'loadout': Game.pause(); Game.go('qload'); break;
     case 'prone': if (alive && !P.slide && !P.ladder && !P.inCar && !P.riding) setProne(!P.prone); break;
     case 'leanL': if (Settings.leanMode==='toggle') P.leanToggle = P.leanToggle===-1?0:-1; break;
@@ -274,12 +275,13 @@ function pressAction(a){
     case 'slide': if (P.sprinting && P.grounded && !P.slide) startSlide(); else if (P.slide) endSlide(); break;
     case 'crouch': if (P.slide) endSlide(); else if (P.prone) setProne(false); else if (Settings.crouchMode==='toggle') P.crouchToggle=!P.crouchToggle; break;
     case 'fire': if (alive){ Arsenal.trigger=true; Arsenal.triggerEdge=true; } break;
-    case 'aim': if (alive){ if (Arsenal.cur==='knife'){ if (Arsenal.swing<=0 && Arsenal.state==='idle' && Arsenal.canFire()) Arsenal.startSwing(true); } else Arsenal.ads=true; } break;
+    case 'aim': if (alive && Arsenal.cur==='fists') break; if (alive){ if (Arsenal.cur==='knife'){ if (Arsenal.swing<=0 && Arsenal.state==='idle' && Arsenal.canFire()) Arsenal.startSwing(true); } else Arsenal.ads=true; } break;
   }
 }
 function releaseAction(a){
   if (a==='fire') Arsenal.trigger=false;
   if (a==='aim') Arsenal.ads=false;
+  if (a==='block') Fists.setBlock(false);
   if (a==='scoreboard'){ UI.tabHeld=false; UI.scoreboard(false); }   // only visible while held
 }
 const locked = () => document.pointerLockElement===canvas || dragLook;
@@ -401,7 +403,7 @@ const AimLock = {
     return chestOf(t);
   },
   update(dt){
-    if (!Dev.enabled || Dev.aim==='off' || !P.alive || Arsenal.cur==='knife' || !(Arsenal.ads || Arsenal.trigger)){ this.cur=null; return; }
+    if (!Dev.enabled || Dev.aim==='off' || !P.alive || isMeleeId(Arsenal.cur) || !(Arsenal.ads || Arsenal.trigger)){ this.cur=null; return; }
     const head=Dev.aim==='head', eye=camera.position, fwd=new V3(-Math.sin(P.yaw)*Math.cos(P.pitch), Math.sin(P.pitch), -Math.cos(P.yaw)*Math.cos(P.pitch));
     const list=[]; for (const b of Bots.list) if (b.alive && b.rig) list.push(b); if (Net.inMatch) for (const e of Net.targets()) if (e.rig) list.push(e);
     let best=null, bestA=0.7;   // ~40 degrees
@@ -430,7 +432,7 @@ const AimAssist = {
     return {a:best, p:bp}; },
   update(dt){
     this.slow=1; const C=this.CFG[Settings.aimAssist], was=this.cur, prev=this.prev; this.prev=null;
-    if (!C || (Dev.enabled && Dev.aim!=='off') || Game.state!=='playing' || !P.alive || P.stunT>0 || Arsenal.cur==='knife' || Arsenal.cur==='sniper' || P.inCar){ this.cur=null; return; }
+    if (!C || (Dev.enabled && Dev.aim!=='off') || Game.state!=='playing' || !P.alive || P.stunT>0 || isMeleeId(Arsenal.cur) || Arsenal.cur==='sniper' || P.inCar){ this.cur=null; return; }
     const eye=camera.position, fwd=new V3(-Math.sin(P.yaw)*Math.cos(P.pitch), Math.sin(P.pitch), -Math.cos(P.yaw)*Math.cos(P.pitch));
     if (this.cur){ const r=this.angleTo(this.cur, eye, fwd); if (!this.cur.alive || !r.p || r.a>C.keep || !lineOfSight(eye, r.p)) this.cur=null; }
     if (!this.cur){
@@ -485,7 +487,7 @@ function loop(now){
   if (inGame){
     if (Menu.on) Menu.hide();
     if (st==='playing'){
-      Env.update(dt, camera);
+      Env.update(dt, camera); if (Arena.on){ Arena.light(); Arena.update(dt); }
       if (P.alive && !P.inCar && !P.riding){ const n=Math.ceil(dt/0.0167); for (let i=0;i<n;i++) stepPlayer(dt/n); }
       { const bw=innerWidth*renderer.getPixelRatio(), k=Math.max(1/bw, 1.25/innerWidth)*2; OutlinePx.value.set(k, k*camera.aspect); }
       AimLock.update(dt); AimAssist.update(dt); KnifeLock.update(dt); Rides.update(dt); Net.update(dt);
@@ -497,7 +499,7 @@ function loop(now){
       for (const car of interactCars){ if (car.open!==car.target){ car.open=damp(car.open,car.target,8,dt); if (Math.abs(car.open-car.target)<0.005) car.open=car.target; car.pivot.rotation.y=car.yaw+car.open; } }
     } else if (st==='end'){ Bots.update(dt*0); }
     Corpses.update(st==='playing'||st==='end'?dt:0); Glass.update(dt); FX.update(dt); Smoke.update(dt); MuzzleFlash.update(dt); Casings.update(st==='playing'||st==='end'?dt:0);
-    Rig.update(dt);
+    Rig.update(dt); if (Arena.on) Arena.camera();
     PlayerChar.update(st==='playing'?dt:0);
     LaserBeam.update(); Flashlight.update();
     if (renderer.shadowMap.enabled){ const sx=Math.round(P.pos.x/4)*4, sz=Math.round(P.pos.z/4)*4; sun.target.position.set(sx,0,sz); sun.position.set(sx,0,sz).addScaledVector(Env.sunDir,80); sun.target.updateMatrixWorld(); }
@@ -506,7 +508,7 @@ function loop(now){
     if (blur>0.01) Post.begin(); else renderer.setRenderTarget(null);
     if (Thermal.active()) Thermal.render(renderer); else renderer.render(scene,camera);
     if (Dev.wall && st==='playing' && !Thermal.active()) WallHack.render(renderer);
-    const showVM = (Rig.mode==='first' || Rig.optic) && !Rig.scoped && !P.inCar && P.alive;
+    const showVM = (Rig.mode==='first' || Rig.optic) && !Rig.scoped && !P.inCar && P.alive && !Arena.watch && !Arena.seat;
     if (showVM && (UI.scopeOverlay||0)<0.97){ VM.syncLights(hemi,sun); VM.update(dt,Arsenal,{speed:P.riding?0:P.speed,sprint:P.sprinting,grounded:P.grounded}); FPArms.sync(); renderer.clearDepth(); renderer.render(VM.scene,VM.cam); }
     if (blur>0.01) Post.end(blur); else if (Post.enabled()){ Post.ensure(); }
     UI.updateHUD(dt);

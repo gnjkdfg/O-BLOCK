@@ -19,7 +19,7 @@ const PROG = {
   cash: { win:100, kill:10, second:50, third:25, participation:10, level:25 },   // level: paid for every level gained
   carHop: { chance:1/3, min:1, max:20, cooldown:120 },          // per vehicle, seconds
   unlock: {},                             // no level locks: every gun is free except the AR-15 ($10,000); attachments are bought with cash
-  price:  { ar15:10000, mp7:3000, taser:5000, sawedoff:2500, switch:500, jeff:1000, cop:5000,
+  price:  { ar15:10000, mp7:3000, taser:5000, sawedoff:2500, switch:500, jeff:1000, cop:5000, conur:10000,
             'att:dot_open':100, 'att:dot_closed':125, 'att:scope15':200, 'att:scope25':300, 'att:vgrip':100, 'att:brace':125,
             'att:skeleton':150, 'att:folding':175, 'att:suppressor':250, 'att:compensator':125, 'att:laser':75, 'att:flashlight':75,
             'att:mag_ext':150, 'att:mag_drum':300 },                                       // attachments: bought once, fit every gun they're made for
@@ -31,7 +31,7 @@ const ProfileAuthority = {
   s:null, match:null, log:[],
   load(){
     const d = Store.get('profile', null) || {};
-    this.s = { cash: d.cash|0, xp: d.xp|0, owned: Object.assign({switch:false, jeff:false, cop:false}, d.owned||{}), paid: (d.paid||[]).slice(-50), unlimited: !!d.unlimited, v6: !!d.v6 };
+    this.s = { cash: d.cash|0, xp: d.xp|0, owned: Object.assign({switch:false, jeff:false, cop:false, conur:false}, d.owned||{}), paid: (d.paid||[]).slice(-50), unlimited: !!d.unlimited, v6: !!d.v6 };
     // one-time move to the cash economy: guns you had already reached by level stay yours, attachments you were using stay
     // yours, and you get the $25-per-level reward for the levels you already have
     if (!this.s.v6){ const L=this.level(), OLD={drako:10, sniper:20, shotgun:50, ar15:100};
@@ -43,7 +43,7 @@ const ProfileAuthority = {
   },
   // online: the server's profile is shown (and purchases go to the server); the offline profile is kept aside and restored
   useRemote(p){
-    if (p){ if (!this.local) this.local=this.s; this.s={cash:p.cash, xp:p.xp, owned:Object.assign({switch:false,jeff:false,cop:false},p.owned), paid:[], unlimited:false, remote:true, history:p.history||[]}; }
+    if (p){ if (!this.local) this.local=this.s; this.s={cash:p.cash, xp:p.xp, owned:Object.assign({switch:false,jeff:false,cop:false, conur:false},p.owned), paid:[], unlimited:false, remote:true, history:p.history||[]}; }
     else if (this.local){ this.s=this.local; this.local=null; }
     Bus.emit('profile');
   },
@@ -143,7 +143,7 @@ const ProfileAuthority = {
       case 'addCash': s.cash+=Math.max(0,arg|0); break;
       case 'unlimitedCash': s.unlimited=!!arg; break;
       case 'testing': break;                      // testing toggles (no damage / infinite ammo): logged, profile unchanged
-      case 'reset': s.cash=0; s.xp=0; s.owned={switch:false, jeff:false, cop:false}; s.unlimited=false; break;
+      case 'reset': s.cash=0; s.xp=0; s.owned={switch:false, jeff:false, cop:false, conur:false}; s.unlimited=false; break;
       default: return {ok:false, why:'unknown command'};
     }
     this.save(); Bus.emit('profile');
@@ -169,7 +169,7 @@ async function devCheck(pw){
   } catch(e){ return false; }
 }
 const Dev = {
-  enabled:false, remote:false, god:false, infAmmo:false, wall:false, aim:'off',
+  enabled:false, remote:false, god:false, infAmmo:false, wall:false, aim:'off', botsOff:false, speed:1,
   seq:{n:0, t0:0}, fails:0, lockUntil:0,
   init(){
     addEventListener('keydown', e=>{
@@ -206,8 +206,23 @@ const Dev = {
     if (typeof Net!=='undefined' && Net.connected){ const r=await Net.devAuth(pw); return {ok:true, remote:!!r.ok, why:r.ok?'':r.why}; }
     return {ok:true};
   },
-  lock(){ this.enabled=false; this.remote=false; this.god=false; this.infAmmo=false; this.wall=false; this.aim='off'; const p=document.getElementById('devpanel'); if (p) p.remove(); Bus.emit('profile'); Bus.emit('devtag'); },
+  lock(){ this.enabled=false; this.remote=false; this.god=false; this.infAmmo=false; this.wall=false; this.aim='off'; this.botsOff=false; this.setSpeed(1); const p=document.getElementById('devpanel'); if (p) p.remove(); Bus.emit('profile'); Bus.emit('devtag'); },
   showTag(){ return this.enabled && Settings.devTag!==false; },
+  // speed hack: online the server is told too, so its movement check allows the extra speed for this account only
+  setSpeed(x){ this.speed=clamp(+x||1,1,3); if (Net.inMatch && this.remote) Net.send({t:'dev', cmd:'speed', arg:this.speed}); if (this.enabled) UI.toast(this.speed>1?'DEV · SPEED x'+this.speed:'DEV · SPEED NORMAL','ok'); },
+  // everyone you could kill: bots offline; online every other player and bot in the match (the server does the kill)
+  targets(){ const out=new Map();
+    if (Net.inMatch){ for (const e of Net.ents.values()) if (e.id!==Net.id) out.set(e.id,{id:e.id, name:(e.name||'?')+(e.kind==='bot'?' (bot)':'')}); }
+    for (const b of Bots.list) if (b.alive!==undefined){ const id=Net.inMatch?Net.netIdOf(b):'bot:'+Bots.list.indexOf(b); if (!out.has(id)) out.set(id,{id, name:b.name+' (bot)'}); }
+    return [...out.values()]; },
+  // players (not bots) in your match, you included: gifts go to their saved profile or their in-match inventory
+  players(){ return [{id:Net.id, name:'Me'}].concat([...Net.ents.values()].filter(e=>e.kind==='player' && e.id!==Net.id).map(e=>({id:e.id, name:e.name||'?'}))); },
+  gifts(){ const name=k=>(CHARACTERS[k]||WEAPON_DEFS[k]||{}).name || (k==='switch'?'Glock Switch':k.replace(/^att:/,'').replace(/_/g,' '));
+    return [['cash','Cash ($ amount)'],['beer','Beer'],['blunt','Blunt'],['zyn','Zyn'],['flash','Flashbangs'],['mines','Mines'],['ammo','Ammo refill']]
+      .concat(Object.keys(PROG.price).map(k=>['own:'+k,'Unlock: '+name(k)])); },
+  kill(id){ if (!id) return;
+    if (Net.inMatch){ if (!this.remote) return UI.toast('DEV · SIGN IN ONLINE FIRST (THE SERVER DOES THE KILL)','warn'); Net.send({t:'dev', cmd:'kill', arg:id}); return; }
+    const b=Bots.list[+String(id).split(':')[1]]; if (b && b.alive){ b.damage(100000, false, 'dev'); UI.toast('DEV · KILLED '+String(b.name).toUpperCase(),'ok'); } },
   toggle(){
     let p=document.getElementById('devpanel');
     if (p){ p.remove(); return; }
@@ -224,6 +239,12 @@ const Dev = {
       <div><label><input id="dv-ammo" type="checkbox" ${this.infAmmo?'checked':''}> Infinite reserve ammo (testing)</label></div>
       <div>Aim assist <select id="dv-aim"><option value="off">Off</option><option value="body">Aim lock (body)</option><option value="head">Head lock</option></select><small style="display:block">Locks on while you aim or shoot, to the nearest target you can see near the crosshair</small></div>
       <div><label><input id="dv-wall" type="checkbox" ${this.wall?'checked':''}> Wall hack (see players and bots through walls)</label></div>
+      <div><label><input id="dv-bots" type="checkbox" ${this.botsOff?'checked':''}> Bots don't attack me</label></div>
+      <div>Speed hack <select id="dv-speed">${[1,1.3,1.6,2,3].map(x=>`<option value="${x}" ${this.speed===x?'selected':''}>${x===1?'Off':'x'+x}</option>`).join('')}</select></div>
+      <div>Kill <select id="dv-target">${this.targets().map(t=>`<option value="${esc(String(t.id))}">${esc(t.name)}</option>`).join('')||'<option value="">nobody here</option>'}</select><button data-c="kill">Kill</button></div>
+      <div class="dv-give"><b>Give</b> ${Net.inMatch ? `<select id="dv-gto">${this.players().map(t=>`<option value="${esc(String(t.id))}">${esc(t.name)}</option>`).join('')}</select>
+        <select id="dv-gwhat">${this.gifts().map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('')}</select>
+        <input id="dv-gn" type="number" min="1" value="1000" style="width:80px"><button data-c="give">Give</button>` : '<small>Join a private match to give players cash or items</small>'}</div>
       <div><label><input id="dv-tag" type="checkbox" ${Settings.devTag!==false?'checked':''}> Show DEV tag above my name</label></div>
       <div><button data-c="copyControls">Copy my controls</button></div>
       <div><button data-c="night">Skip to night</button><button data-c="day">Skip to day</button></div>
@@ -237,12 +258,19 @@ const Dev = {
         const done=()=>UI.toast('CONTROLS COPIED · PASTE THEM TO CLAUDE','ok');
         (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(done, ()=>{ prompt('Copy this:', code); });
         return; }
+      if (c==='kill'){ this.kill(document.getElementById('dv-target').value); return; }
+      if (c==='give'){ if (!this.remote) return UI.toast('DEV · SIGN IN ONLINE FIRST','warn');
+        Net.send({t:'dev', cmd:'give', arg:{id:document.getElementById('dv-gto').value, what:document.getElementById('dv-gwhat').value, n:+document.getElementById('dv-gn').value}}); return; }
       if (c==='night'){ Env.t=PERIOD_SECONDS*5+1; return; } if (c==='day'){ Env.t=PERIOD_SECONDS*2+1; return; }
       const arg = c==='setLevel'?v('dv-lvl') : c==='setXP'?v('dv-xp') : c==='addCash'?v('dv-cash') : undefined;
       const r=ProfileAuthority.dev(c,arg); UI.toast(r.ok?'DEV · '+c.toUpperCase():'DEV · '+r.why.toUpperCase(), r.ok?'ok':'warn'); p.remove(); this.toggle(); });
     const sel=document.getElementById('dv-aim'); sel.value=this.aim;
     sel.onchange=e=>{ this.aim=e.target.value; UI.toast('DEV · '+(this.aim==='head'?'HEAD LOCK':this.aim==='body'?'AIM LOCK':'AIM ASSIST OFF'),'ok'); };
     sel.onkeydown=e=>e.stopPropagation();
+    document.getElementById('dv-bots').onchange=e=>{ this.botsOff=e.target.checked; UI.toast(this.botsOff?'DEV · BOTS IGNORE YOU':'DEV · BOTS ATTACK AGAIN','ok'); };
+    const sp=document.getElementById('dv-speed'); sp.onkeydown=e=>e.stopPropagation(); sp.onchange=e=>this.setSpeed(+e.target.value);
+    document.getElementById('dv-target').onkeydown=e=>e.stopPropagation();
+    for (const id of ['dv-gto','dv-gwhat','dv-gn']){ const x=document.getElementById(id); if (x) x.onkeydown=e=>e.stopPropagation(); }
     document.getElementById('dv-wall').onchange=e=>{ this.wall=e.target.checked; UI.toast(this.wall?'DEV · WALL HACK ON':'DEV · WALL HACK OFF', 'ok'); };
     document.getElementById('dv-tag').onchange=e=>{ Settings.devTag=e.target.checked; saveSettings(); Bus.emit('devtag'); };
     document.getElementById('dv-unl').onchange=e=>ProfileAuthority.dev('unlimitedCash', e.target.checked);

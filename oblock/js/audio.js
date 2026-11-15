@@ -215,7 +215,9 @@ const Snd = {
   bounce(pos){ if (!this.ctx) return; const s=this.spatial(pos); this.click(0,900,0.2*s.g,'env'); },
   mineArm(){ if (!this.ctx) return; const t=this.ctx.currentTime; this.tone(t,1200,1200,0.06,{type:'square',gain:0.08,cat:'env'}); this.tone(t+0.12,1600,1600,0.06,{type:'square',gain:0.08,cat:'env'}); },
   // drawn sounds for the items (no recordings were supplied for beer / Zyn / scooter bell)
-  levelUp(){ if (!this.ctx) return; const t=this.ctx.currentTime; [523,659,784,1047].forEach((f,i)=>this.tone(t+i*0.09,f,f,0.22,{type:'triangle',gain:0.12,cat:'ui'})); },
+  // your kills: imported kill sound (falls back to nothing; the hitmarker still plays)
+  killSfx(){ if (this.buf.kill_ping) this.play('kill_ping',{cat:'hits',vol:0.55,max:2}); },
+  levelUp(){ if (!this.ctx) return; if (this.buf.level_up){ this.play('level_up',{cat:'ui',vol:0.55,max:1}); return; } const t=this.ctx.currentTime; [523,659,784,1047].forEach((f,i)=>this.tone(t+i*0.09,f,f,0.22,{type:'triangle',gain:0.12,cat:'ui'})); },
   canOpen(){ if (!this.ctx) return; const t=this.ctx.currentTime; this.click(0,2200,0.25,'env'); this.noise(t+0.03,0.32,{f:5200,q:0.8,type:'highpass',gain:0.35,cat:'env'}); },
   gulps(n){ if (!this.ctx) return; const t=this.ctx.currentTime; for (let i=0;i<n;i++){ this.tone(t+i*0.42,260,140,0.13,{gain:0.22,cat:'env'}); this.noise(t+i*0.42,0.1,{f:420,q:2,gain:0.25,cat:'env'}); } },
   zynTin(){ if (!this.ctx) return; const t=this.ctx.currentTime; this.click(0,3000,0.2,'env'); this.click(0.08,2400,0.15,'env'); this.noise(t+0.15,0.05,{f:1800,q:3,gain:0.12,cat:'env'}); },
@@ -242,7 +244,7 @@ const Snd = {
     const N=(dt,dur,o)=>this.noise(t+dt,dur,Object.assign({cat:'ui'},o)), T=(dt,f0,f1,dur,o)=>this.tone(t+dt,f0,f1,dur,Object.assign({cat:'ui'},o));
     switch(kind){
       case 'hover':   T(0,2100,1900,0.018,{type:'triangle',gain:0.022}); N(0,0.012,{f:6500,q:8,gain:0.018}); break;                 // faint tick
-      case 'click':   N(0,0.025,{f:3200,q:6,gain:0.11}); T(0,1200,780,0.04,{gain:0.07}); break;                                         // crisp tock
+      case 'click':   if (this.buf.ui_click){ this.play('ui_click',{cat:'ui',vol:0.17,max:3,rate:0.97+Math.random()*0.06}); break; } N(0,0.025,{f:3200,q:6,gain:0.11}); T(0,1200,780,0.04,{gain:0.07}); break;   // your mouse-click recording (quiet)
       case 'select':  T(0,900,900,0.035,{type:'triangle',gain:0.055}); T(0.035,1350,1350,0.045,{type:'triangle',gain:0.05}); break;      // two-step blip
       case 'char':    N(0,0.13,{f:1800,q:1.5,gain:0.05,attack:0.04}); T(0.02,660,700,0.12,{gain:0.06}); T(0.07,990,1000,0.16,{gain:0.05}); break;   // soft whoosh + chime
       case 'weapon':  N(0,0.03,{f:2400,q:10,gain:0.14}); T(0,380,300,0.05,{type:'square',gain:0.025}); N(0.055,0.022,{f:5200,q:12,gain:0.09}); break; // metal clack + bolt
@@ -313,15 +315,13 @@ const Ambience = {
   },
   update(dt, inMenu){
     const c=Snd.ctx; if (!c || !this.bed) return;
+    if (typeof Arena!=='undefined' && Arena.on){ this.bed.g.gain.setTargetAtTime(0.02, c.currentTime, 1); return; }   // underground: no street sounds
     const p=inMenu?{x:0,z:0}:P.pos, open=clamp(Math.hypot(p.x+7,p.z+6)/60,0.35,1);   // courtyard is sheltered
     this.bed.g.gain.setTargetAtTime(0.13*open, c.currentTime, 1);
     this.t-=dt; if (this.t>0) return; this.t=rr(5,14);
     const a=Math.random()*PI*2, pan=Math.sin(a)*0.8, t=c.currentTime, k=Math.random();
-    if (k<0.3){ // distant siren
-      const o=c.createOscillator(), g=c.createGain(), p2=c.createStereoPanner(); o.type='triangle';
-      for (let i=0;i<8;i++){ o.frequency.setValueAtTime(700,t+i*0.6); o.frequency.linearRampToValueAtTime(1100,t+i*0.6+0.3); o.frequency.linearRampToValueAtTime(700,t+i*0.6+0.6); }
-      g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.025,t+1.2); g.gain.exponentialRampToValueAtTime(0.0001,t+5);
-      p2.pan.value=pan; o.connect(g); g.connect(p2); p2.connect(Snd.bus.ambience); o.start(t); o.stop(t+5.1);
+    if (k<0.3){ // distant police 'woop' (your recording), muffled and as quiet as the old synth siren
+      Snd.play('siren_woop',{cat:'ambience',vol:0.12,rate:0.94+Math.random()*0.1,max:1,filter:{type:'lowpass',f:2600}});
     } else if (k<0.42){ // dog barking somewhere in the block
       for (let i=0;i<2+Math.floor(Math.random()*3);i++){ const tt=t+i*0.32; Snd.noise(tt,0.11,{f:650,q:2.5,gain:0.06,attack:0.01,cat:'ambience',pan}); Snd.tone(tt,420,300,0.1,{type:'sawtooth',gain:0.018,cat:'ambience',pan}); }
     } else if (k<0.52){ // bird

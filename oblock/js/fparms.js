@@ -23,6 +23,7 @@ const HAND_POSES = {
   vgripL:   {curl:[[1.2,1.35,0.9],[1.25,1.4,0.9],[1.3,1.4,0.9],[1.35,1.45,0.9]], thumb:{rot:[0.2,0.5,-0.3], curl:[0.4,0.3]}},   // fist round a vertical grip
   knife:    {curl:[[1.3,1.45,1.0],[1.35,1.5,1.0],[1.4,1.5,1.0],[1.45,1.5,1.0]], thumb:{rot:[0.35,-0.6,-0.8], curl:[0.6,0.5]}},
   vape:     {curl:[[0.75,0.9,0.5],[0.85,1.0,0.55],[1.35,1.5,1.0],[1.45,1.5,1.0]], thumb:{rot:[0.35,-0.75,-0.55], curl:[0.35,0.25]}},  // pinch: thumb pad against index/middle
+  fist:     {curl:[[1.5,1.5,1.3],[1.5,1.5,1.3],[1.5,1.5,1.3],[1.5,1.5,1.3]], thumb:{rot:[-0.4,0.3,-1.2], curl:[0.8,1.0]}},   // closed fist, thumb wrapped across
   relax:    {curl:[[0.3,0.4,0.25],[0.35,0.45,0.3],[0.4,0.5,0.3],[0.45,0.55,0.35]], thumb:{rot:[0.2,-0.4,-0.3], curl:[0.2,0.1]}},
 };
 // Where each hand goes, per weapon (weapon space): pos = palm centre, palm = palm-facing direction, fingers = wrist->knuckle direction
@@ -59,8 +60,8 @@ const FPArms = {
   build(scene, look){
     if (this.R){ scene.remove(this.R.root); scene.remove(this.L.root); }
     const L=lookHex(look||CharLook), C=CHARACTERS[L.char]||CHARACTERS.tracksuit;
-    let skinHex='#6b4128'; const ca=CharAssets[L.char]; if (ca) ca.scene.traverse(o=>{ if (o.isMesh && /^Skin/.test(o.material.name)) skinHex='#'+o.material.color.getHexString(); });
-    const skin=new THREE.MeshLambertMaterial({color:skinHex}), sleeve=new THREE.MeshLambertMaterial({color:L.jacketHex});
+    let skinHex='#6b4128'; const ca=CharAssets[L.char]; if (ca) ca.scene.traverse(o=>{ if (o.isMesh && /^Skin/.test(o.material.name) && !o.material.map) skinHex='#'+o.material.color.getHexString(); });   // plain skin tone (not a textured, tattooed skin)
+    const skin=new THREE.MeshLambertMaterial({color:skinHex}), sleeve=new THREE.MeshLambertMaterial({color:C.bareArms?skinHex:L.jacketHex});   // shirtless characters: bare forearms
     this.mats={skin,sleeve}; this.scene=scene;
     if (this.inst) for (const m of Object.values(this.inst)){ scene.remove(m); m.dispose(); }
     this.pieces={cyl:[], sph:[]};
@@ -85,7 +86,7 @@ const FPArms = {
         im.setMatrixAt(i, m); }
       im.instanceMatrix.needsUpdate=true; }
   },
-  recolor(look){ if (!this.mats) return; const L=lookHex(look||CharLook); this.mats.sleeve.color.set(L.jacketHex); },
+  recolor(look){ if (!this.mats) return; const L=lookHex(look||CharLook); if (!(CHARACTERS[L.char]||{}).bareArms) this.mats.sleeve.color.set(L.jacketHex); },
   makeArm(side, skin, sleeve){
     const A=FP_ARM, root=new THREE.Group(), hand=new THREE.Group(); root.add(hand);
     const arm={root}, PC=this.pieces;

@@ -58,7 +58,7 @@ const Arsenal = {
     return ProfileAuthority.canUse(id) ? id : 'glock'; },
   // may this weapon be carried right now? (mode, room rules, owned / bought)
   allowed(w){
-    if (w==='knife') return true; if (!WEAPON_DEFS[w]) return false;
+    if (w==='knife' || w==='fists') return true; if (!WEAPON_DEFS[w]) return false;
     if (w!=='taser' && Mode.allowedFirearm(w)!==w) return false; if (w==='taser' && Mode.cur==='backpack') return false;
     const R=roomRules(); if (R && (!R.weapons.includes(w) || (R.startWeapon==='glock' && w!=='glock' && w!=='taser'))) return false;
     return (R && R.unlocks==='all') || ProfileAuthority.canUse(w);
@@ -70,14 +70,15 @@ const Arsenal = {
     this.primary=pick(Loadout.firearm, PRIMARIES); this.secondary=pick(Loadout.secondary, SECONDARIES)||'glock';
     if (this.primary===this.secondary) this.primary=null;
     this.melee=this.allowed(Loadout.melee)?Loadout.melee:'knife';
+    if (Mode.cur==='fade'){ this.primary=null; this.secondary=null; this.melee='fists'; }   // RUN THAT FADE: fists only
     this.firearm=this.primary||this.secondary; this.ammo={}; if (!Mode.allowSwitch()) this.glockAuto=false;
     for (const id of [...FIREARMS,'taser']){ const d=weaponDef(id); this.ammo[id]={mag:d.mag, res:d.reserve}; }
-    this.cur=null; this.state='idle'; this.equip(this.firearm, true);
+    this.cur=null; this.state='idle'; this.equip(this.firearm||this.melee, true);
   },
   refreshDef(){ this.def=weaponDef(this.cur, this.glockAuto); },
   // change a slot mid-match (in-game loadout): the weapon goes into its own slot (primary / secondary / melee)
   setFirearm(id){
-    if (!WEAPON_SLOT[id] || id==='knife'){ if (id==='knife'){ this.melee='knife'; if (WEAPON_SLOT[this.cur]==='melee') this.equip('knife',true); } return; }
+    if (!WEAPON_SLOT[id] || isMeleeId(id)){ if (isMeleeId(id)){ this.melee=id; if (WEAPON_SLOT[this.cur]==='melee') this.equip(id,true); } return; }
     if (Mode.allowedFirearm(id)!==id){ Bus.emit('toast',{t:'GLOCK ONLY IN '+Mode.title(),kind:'warn'}); return; }
     { const R=roomRules(); if (R && (!R.weapons.includes(id) || R.startWeapon==='glock'&&id!=='glock')){ Bus.emit('toast',{t:WEAPON_DEFS[id].name+' IS OFF IN THIS ROOM',kind:'warn'}); return; }
       if (!(R && R.unlocks==='all') && !ProfileAuthority.canUse(id)){ Bus.emit('toast',{t:WEAPON_DEFS[id].name+' · BUY IT IN LOADOUT ('+fmtCash(ProfileAuthority.price(id))+')',kind:'warn'}); return; } }
@@ -119,13 +120,13 @@ const Arsenal = {
   canSprintPose(){ return this.state!=='reload' && this.swing<=0 && this.recoilP<0.01; },
   canFire(){ return Game.state==='playing' && P.alive && !(P.stunT>0) && !P.inCar && !P.ladder && !P.anim && !P.smoking && !P.using && !Perks.busy() && !P.search && !Mode.ended; },
   update(dt){
-    const d=this.def;
+    const d=this.def; Fists.update(dt);
     this.kick=damp(this.kick,0,14,dt); this.flashT=Math.max(0,this.flashT-dt); this.bloom=damp(this.bloom,0,5,dt);
     this.recoilP=Math.max(0,this.recoilP-dt);
     // recoil recovery: the view drifts back down part of the way once you stop firing
     if (this.recoilDebt>0 && performance.now()/1000-this.lastShot>0.12){ const r=Math.min(this.recoilDebt,(d.recover||5)*0.02*dt*10); P.pitch-=r; this.recoilDebt-=r; }
     if (performance.now()/1000-this.lastShot>0.3) this.spray=0;
-    const wantAds = this.ads && this.state!=='reload' && this.state!=='switch' && !P.sprinting && !P.slide && this.cur!=='knife' && this.canFire();
+    const wantAds = this.ads && this.state!=='reload' && this.state!=='switch' && !P.sprinting && !P.slide && !isMeleeId(this.cur) && this.canFire();
     this.adsK = clamp(this.adsK + (wantAds?1:-1)*dt/(d.adsTime||0.15), 0, 1);
     if (this.state==='switch'){
       this.stateT+=dt; const half=this.stateDur/2;
@@ -148,7 +149,8 @@ const Arsenal = {
     let firedNow=false;
     if (this.trigger && this.canFire() && this.state==='idle' && !P.sprinting){
       const now=performance.now()/1000;
-      if (d.kind==='melee'){ if (this.swing<=0 && now>=this.nextFire) this.startSwing(false); }
+      if (d.fist){ /* fists: Fists.update reads the trigger (tap = jab, hold = charge) */ }
+      else if (d.kind==='melee'){ if (this.swing<=0 && now>=this.nextFire) this.startSwing(false); }
       else if (now>=this.nextFire && (d.kind==='auto' || this.triggerEdge)){
         const a=this.ammo[this.cur];
         if (a.mag<=0){ if (this.triggerEdge) Snd.dry(); this.triggerEdge=false; Snd.autoStop(); if (a.res>0) this.reload(); }
@@ -388,7 +390,7 @@ const LaserBeam = {
   hide(){ if (!this.line) return; this.line.visible=false; this.dot.visible=false; },
   update(){
     const d=Arsenal.def;
-    if (!d.laser || Arsenal.cur==='knife' || !P.alive || P.inCar || P.smoking || Rig.scoped || Game.state!=='playing'){ this.hide(); return; }
+    if (!d.laser || isMeleeId(Arsenal.cur) || !P.alive || P.inCar || P.smoking || Rig.scoped || Game.state!=='playing'){ this.hide(); return; }
     // origin AND direction come from the laser module's transform on the gun itself (not the crosshair),
     // so the beam follows sway, recoil, the run cycle, reloads and aiming
     let from, dir;

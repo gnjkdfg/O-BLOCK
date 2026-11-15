@@ -17,7 +17,7 @@ const LOOT_TABLE = { beer:1/7, blunt:1/5, zyn:1/8, ammo:0.6 };
 const ammoCap = id => Math.round(weaponDef(id).reserve*1.5);
 const lootAmt = id => id==='taser' ? 2 : weaponDef(id).mag;
 function addAmmo(id, n){ const a=Arsenal.ammo[id]; if (!a) return 0; const add=Math.max(0, Math.min(n, ammoCap(id)-a.res)); a.res+=add; return add; }
-function lootGuns(){ return [Arsenal.primary, Arsenal.secondary, Arsenal.melee].filter((w,i,l)=>w && w!=='knife' && l.indexOf(w)===i && Arsenal.ammo[w]); }
+function lootGuns(){ return [Arsenal.primary, Arsenal.secondary, Arsenal.melee].filter((w,i,l)=>w && !isMeleeId(w) && l.indexOf(w)===i && Arsenal.ammo[w]); }
 
 const Effects = {
   zyn:0, beer:0, beerHeal:0,

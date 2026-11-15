@@ -17,8 +17,11 @@ const CHARACTERS = {
     desc:'Red bomber jacket, white tee, chain, dreads, black denim · ski mask during Triple Health', defaults:{jacket:'Red',pants:'Black'}, ability:'triple', price:1000},
   cop:{name:'COP', glb:'cop', top:'Uniform', bottom:'Slacks', topMat:/^Uniform_Shirt/, botMat:/^Slacks/, fpHide:/^(Head|Hair|Cap|Glasses|Slacks|Shoes|Belt)/,
     desc:'Navy uniform shirt with badge and tie, duty belt, slacks, cap and glasses', defaults:{jacket:'Navy',pants:'Black'}, ability:'double', price:5000},
+  // shirtless fighter: no jacket to recolour (the outfit colour changes his shorts); first-person arms are bare skin
+  conur:{name:'CONUR MCNUGGET', glb:'conur', top:'NoTop', bottom:'Shorts', topMat:/^$^/, botMat:/^Shorts_Main/, fpHide:/^(Head|Hair|Beard|Shorts|Legs)/, bareArms:true,
+    desc:'Tattooed fighter: fight shorts with gold trim, gloves, buzz cut and beard', defaults:{jacket:'Black',pants:'Black'}, ability:'speed', price:10000},
 };
-const CHAR_ORDER=['tracksuit','jeff','cop'];
+const CHAR_ORDER=['tracksuit','jeff','cop','conur'];
 const CharLook = Object.assign({char:'tracksuit', jacket:'Black', pants:'Black'}, Store.get('look', {}));
 if (!CHARACTERS[CharLook.char]) CharLook.char='tracksuit';
 function saveLook(){ Store.set('look', CharLook); }
@@ -28,9 +31,33 @@ function lookHex(l){ if (l.jacketHex) return Object.assign({char:'tracksuit'}, l
 
 /* --------------------------------------------------------------- asset */
 const CharAssets = {};
-const CHAR_FILE={jeff:'assets/jeff.js', cop:'assets/cop.js'};      // the tracksuit model ships with the first load
+const CHAR_FILE={jeff:'assets/jeff.js', cop:'assets/cop.js', conur:'assets/conur.js'};      // the tracksuit model ships with the first load
 function loadCharacterAsset(ids=CHAR_ORDER){ ids=ids.filter(id=>!CharAssets[id]);
   return Promise.all(ids.map(id=>(CHAR_FILE[id] && !(window.GLB||{})[CHARACTERS[id].glb] ? loadScript(CHAR_FILE[id]) : Promise.resolve()).then(()=>loadOneCharacter(id)))); }
+// Some models (Cop, Conur) tie the sides of the torso and waist to the arm bones (shoulder, upper arm, and even the
+// forearm and hand, which hang against the waist in the rest pose). When an arm comes up to hold a gun it tore a chunk
+// out of the body. Once at load, any vertex on an arm bone that is not actually part of the arm (further from the arm's
+// bone line than the arm is thick) is moved onto the nearest body bone (hips / spine / chest). The arms are untouched.
+function fixTorsoWeights(scene){
+  scene.updateMatrixWorld(true); const v=new THREE.Vector3(), w=new THREE.Vector3(), q=new THREE.Vector3();
+  scene.traverse(m=>{ if (!m.isSkinnedMesh) return; const B=m.skeleton.bones, at=n=>B.findIndex(b=>b.name===n), pos=i=>B[i].getWorldPosition(new THREE.Vector3());
+    const hips=at('hips'), spine=at('spine'), chest=at('chest'); if (hips<0 || spine<0 || chest<0) return;
+    const chestY=pos(chest).y-0.06, spineY=pos(spine).y-0.08;
+    const sides=['L','R'].map(sd=>{ const u=at('upper_arm'+sd), f=at('forearm'+sd), h=at('hand'+sd), c=at('shoulder'+sd); if (u<0 || f<0 || h<0) return null;
+      const a=pos(u), b=pos(f), e=pos(h), tip=e.clone().addScaledVector(e.clone().sub(b).normalize(), 0.14);
+      const chain=new Set(B.map((x,i)=>i).filter(i=>i===u || i===f || i===h || i===c || (new RegExp('^(f\\d_\\d|th_\\d)'+sd+'$')).test(B[i].name)));
+      return {u, c, top:a.y, chain, segs:[[a,b],[b,e],[e,tip]]}; }).filter(Boolean);
+    const segDist=(p,[a,b])=>{ q.copy(b).sub(a); const L2=q.lengthSq(); const t=Math.max(0,Math.min(1,w.copy(p).sub(a).dot(q)/L2)); return p.distanceTo(w.copy(a).addScaledVector(q,t)); };
+    const g=m.geometry, P=g.attributes.position, SI=g.attributes.skinIndex, SW=g.attributes.skinWeight; if (!SI || !SW) return; let moved=0;
+    for (let n=0;n<P.count;n++){ v.fromBufferAttribute(P,n).applyMatrix4(m.matrixWorld); let dist=-1;
+      for (let k=0;k<4;k++){ const bi=SI.array[n*4+k]; if (!(SW.array[n*4+k]>0)) continue; const A=sides.find(s=>s.chain.has(bi)); if (!A) continue;
+        if (dist<0) dist=Math.min(...A.segs.map(sg=>segDist(v,sg)));
+        if (bi===A.c ? (dist<0.09 || v.y>A.top+0.02) : dist<0.075) continue;       // the arm itself and the top of the shoulder keep their weights
+        const to=v.y>chestY?chest:v.y>spineY?spine:hips, j=[0,1,2,3].find(j=>SI.array[n*4+j]===to);
+        if (j!==undefined){ SW.array[n*4+j]+=SW.array[n*4+k]; SW.array[n*4+k]=0; } else SI.array[n*4+k]=to;
+        moved++; } }
+    if (moved){ SI.needsUpdate=SW.needsUpdate=true; } });
+}
 function loadOneCharacter(id){
   const CharAsset = CharAssets[id] = {scene:null, clips:[]};
   return new Promise((res,rej)=>{
@@ -41,10 +68,12 @@ function loadOneCharacter(id){
       const drop=[]; g.scene.traverse(o=>{ if (o.isMesh && /^Icosphere/.test(o.name)) drop.push(o); });
       for (const o of drop) o.parent.remove(o);
       g.scene.traverse(o=>{ if (o.isMesh){
-        const m=o.material, col=m.color.clone().convertLinearToSRGB();
-        o.material=new THREE.MeshLambertMaterial({color:col, skinning:true, name:m.name});
+        const m=o.material, col=m.color.clone().convertLinearToSRGB(), vc=o.geometry.attributes.color;
+        if (vc && !vc.srgb){ for (let i=0;i<vc.count;i++){ const c=new THREE.Color(vc.getX(i),vc.getY(i),vc.getZ(i)).convertLinearToSRGB(); vc.setXYZ(i,c.r,c.g,c.b); } vc.srgb=true; }
+        if (m.map) m.map.encoding=THREE.LinearEncoding;      // shown as authored (this renderer outputs without conversion)
+        o.material=new THREE.MeshLambertMaterial({color:col, map:m.map||null, vertexColors:!!vc, skinning:true, name:m.name});
         o.castShadow=true; } });
-      CharAsset.scene=g.scene; CharAsset.clips=g.animations; res();
+      fixTorsoWeights(g.scene); CharAsset.scene=g.scene; CharAsset.clips=g.animations; res();
     }, rej);
   });
 }
@@ -92,32 +121,31 @@ function mergedTemplate(id){
     const map=o.skeleton.bones.map((b,i)=>{ const j=idx.get(b.name); return j!==undefined && same(o.skeleton.boneInverses[i], SK.boneInverses[j]) ? j : -1; });
     const g=o.geometry, P=g.attributes.position, N=g.attributes.normal, SI=g.attributes.skinIndex, SW=g.attributes.skinWeight, n=P.count;
     for (let i=0;i<n;i++) for (let k=0;k<4;k++) if (GC(SW,i,k)>0 && map[GC(SI,i,k)]<0) return false;
-    const D=G[key]=G[key]||{p:[],n:[],c:[],si:[],sw:[],ix:[]}, base=D.p.length/3, v=new V3(), nm=new THREE.Matrix3().getNormalMatrix(o.bindMatrix);
+    const D=G[key]=G[key]||{p:[],n:[],c:[],si:[],sw:[],ix:[],uv:[],map:key==='Tex'?o.material.map:null}, base=D.p.length/3, v=new V3(), nm=new THREE.Matrix3().getNormalMatrix(o.bindMatrix), VC=g.attributes.color, UV=g.attributes.uv;
     for (let i=0;i<n;i++){ v.fromBufferAttribute(P,i).applyMatrix4(o.bindMatrix); D.p.push(v.x,v.y,v.z); v.fromBufferAttribute(N,i).applyMatrix3(nm).normalize(); D.n.push(v.x,v.y,v.z);
-      D.c.push(col.r,col.g,col.b); for (let k=0;k<4;k++){ const w=GC(SW,i,k); D.si.push(w>0?map[GC(SI,i,k)]:0); D.sw.push(w); } }
+      if (VC) D.c.push(col.r*VC.getX(i),col.g*VC.getY(i),col.b*VC.getZ(i)); else D.c.push(col.r,col.g,col.b); if (D.map) D.uv.push(UV.getX(i),UV.getY(i)); for (let k=0;k<4;k++){ const w=GC(SW,i,k); D.si.push(w>0?map[GC(SI,i,k)]:0); D.sw.push(w); } }
     if (g.index) for (let i=0;i<g.index.count;i++) D.ix.push(base+g.index.getX(i)); else for (let i=0;i<n;i++) D.ix.push(base+i);
     return true; };
   const white=new THREE.Color(1,1,1), panel=new THREE.Color(1.25,1.25,1.25);
   for (const o of src){ const n=o.name, mn=o.material.name, tris=(o.geometry.index?o.geometry.index.count:o.geometry.attributes.position.count)/3;
-    const key = n.startsWith('SkiMask') ? 'SkiMask' : n.startsWith('Hair') ? 'Hair' : n.startsWith(C.top)&&C.topMat.test(mn) ? 'top' : n.startsWith(C.bottom)&&C.botMat.test(mn) ? 'bottom' : 'Body';
+    const key = o.material.map ? 'Tex' : n.startsWith('SkiMask') ? 'SkiMask' : n.startsWith('Hair') ? 'Hair' : n.startsWith(C.top)&&C.topMat.test(mn) ? 'top' : n.startsWith(C.bottom)&&C.botMat.test(mn) ? 'bottom' : 'Body';
     if (!add(key, o, key==='top'||key==='bottom' ? (/Panel|Rib/.test(mn)?panel:white) : o.material.color)){ CA.merged=null; return null; }   // unexpected rig: keep this model unmerged
     if (key!=='SkiMask' && tris>=900 && !/^(Hands|Chain)/.test(n)) add('hull', o, white); }
   const geo=D=>{ const g=new THREE.BufferGeometry(); g.setAttribute('position',new THREE.Float32BufferAttribute(D.p,3)); g.setAttribute('normal',new THREE.Float32BufferAttribute(D.n,3));
     g.setAttribute('color',new THREE.Float32BufferAttribute(D.c,3)); g.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(D.si,4)); g.setAttribute('skinWeight',new THREE.Float32BufferAttribute(D.sw,4));
-    g.setIndex(D.ix); g.computeBoundingSphere(); g.boundingSphere.radius*=1.6; return g; };
+    if (D.uv.length) g.setAttribute('uv',new THREE.Float32BufferAttribute(D.uv,2)); g.setIndex(D.ix); g.computeBoundingSphere(); g.boundingSphere.radius*=1.6; return g; };
   if (G.hull){ const D=G.hull, acc=new Map(), key=i=>Math.round(D.p[i*3]*500)+','+Math.round(D.p[i*3+1]*500)+','+Math.round(D.p[i*3+2]*500);   // smooth the hull's normals across seams
     for (let i=0;i<D.p.length/3;i++){ const k=key(i), a=acc.get(k)||[0,0,0]; a[0]+=D.n[i*3]; a[1]+=D.n[i*3+1]; a[2]+=D.n[i*3+2]; acc.set(k,a); }
     for (let i=0;i<D.p.length/3;i++){ const a=acc.get(key(i)), L=Math.hypot(a[0],a[1],a[2])||1; D.n[i*3]=a[0]/L; D.n[i*3+1]=a[1]/L; D.n[i*3+2]=a[2]/L; } }
   const holder=main.parent, ident=new THREE.Matrix4();
   for (const o of src) o.parent.remove(o);
-  for (const key of ['Body','top','bottom','Hair','SkiMask','hull']){ if (!G[key]) continue;
-    const m=new THREE.SkinnedMesh(geo(G[key]), key==='hull' ? outlineMat() : charMat(new THREE.MeshLambertMaterial({vertexColors:true, skinning:true, name:key})));
+  for (const key of ['Body','Tex','top','bottom','Hair','SkiMask','hull']){ if (!G[key]) continue;
+    const m=new THREE.SkinnedMesh(geo(G[key]), key==='hull' ? outlineMat() : charMat(new THREE.MeshLambertMaterial({vertexColors:true, map:key==='Tex'?G[key].map:null, skinning:true, name:key})));
     m.name = key==='top' ? 'MTop' : key==='bottom' ? 'MBottom' : key==='hull' ? 'MHull' : key; m.castShadow=key!=='hull'; holder.add(m); m.bind(SK, ident); }
   return CA.merged=T;
 }
 
 /* --------------------------------------------------------------- build */
-const B_ = n => n; // bone names are already sanitized by GLTFLoader (hand.L -> handL)
 function buildCharacter(look, opts={}){
   const L=lookHex(look); if (!CHARACTERS[L.char] || !(CharAssets[L.char]&&CharAssets[L.char].scene)) L.char='tracksuit';   // not loaded (yet): the tracksuit is always there
   const C=CHARACTERS[L.char], CharAsset=CharAssets[L.char];
@@ -269,7 +297,6 @@ function placeNic(rig, nic, frameQ, tilt){
   const pq=new THREE.Quaternion(); nic.parent.getWorldQuaternion(pq); nic.quaternion.copy(pq.invert().multiply(q));
 }
 // Nic hit: 0..1 curve over NIC_ANIM (raise, hit, lower)
-function nicCurve(t){ const u=t/NIC_ANIM; return u<0.3 ? u/0.3 : u<0.7 ? 1 : Math.max(0,1-(u-0.7)/0.3); }
 // 0..1 hand-to-mouth curve over the 3 s smoke: raise, inhale, lower
 function smokeCurve(t){ return t<0.45 ? 0 : t<1.25 ? (t-0.45)/0.8 : t<2.0 ? 1 : t<2.7 ? 1-(t-2.0)/0.7 : 0; }
 function smokeIn(t){ return Math.min(1, t*3, Math.max(0,(3-t)*3)); }
@@ -303,12 +330,6 @@ function gaitParams(sp, sprint, crouch){
   return {c, d, front:L*0.38, back:-L*0.62, heelRise:M(0.15,0.2), heelKick:M(0.42,0.55), kneeY:M(0.3,0.42), reachY:M(0.18,0.24),
     hipY:M(-0.065,-0.085), bounce:M(0.065,0.08), lean:M(0.17,0.34)};
 }
-function footCycle(t, stride, lift, dirx, dirz){
-  t=((t%1)+1)%1; let s, y=0;
-  if (t<0.5){ s=lerp(0.5,-0.5,t/0.5); }
-  else { const k=(t-0.5)/0.5, e=k*k*(3-2*k); s=lerp(-0.5,0.5,e); y=Math.sin(k*PI)*lift; }
-  return [dirx*s*stride, y, dirz*s*stride];
-}
 const _rl=new V3();
 function rootPt(rig,x,y,z){ return rig.root.localToWorld(_rl.set(x,y,z)).clone(); }
 const _ql=new THREE.Quaternion(), _el=new THREE.Euler();
@@ -341,6 +362,8 @@ function endStunRag(rig){
 }
 function animateCharacter(rig, st, dt){
   _animateCharacter(rig, st, dt);
+  if (rig.flinch>0 && !rig.rag){ const e=Math.sin(Math.min(1,rig.flinch)*PI*0.5); rig.flinch=Math.max(0,rig.flinch-dt*4.5);   // punched: head and chest snap back once
+    if (rig.bones.chest) rig.bones.chest.rotateX(-0.2*e); if (rig.bones.head) rig.bones.head.rotateX(-0.32*e); }
   const g=rig.getUp; if (!g || rig.rag) return;          // getting up: ease from the lying pose into the live animation
   g.t+=dt; const k=Math.min(1,g.t/0.45), e=k*k*(3-2*k);
   for (const [b,p,q] of g.from){ b.position.lerpVectors(p, b.position, e); b.quaternion.slerpQuaternions(q, b.quaternion.clone(), e); }
@@ -354,7 +377,7 @@ function _animateCharacter(rig, st, dt){
   { const tp=st.prone?1:0; rig.proneK += clamp(tp-rig.proneK, -dt*1.6, dt*1.6); }   // ~0.6 s down (kneel, then tip forward), same back up
   if (rig.proneK>0.05) mode='prone';           // also while getting up, so the stand-up plays the kneel in reverse
   else if (st.ladder) mode='ladder'; else if (st.vault) mode='vault'; else if (st.slide) mode='slide'; else if (st.sit) mode='sit';
-  else if (st.air) mode='air'; else if (st.crouch) mode = sp>0.4 ? 'crouchwalk' : (st.hold && st.hold.weapon && st.hold.weapon.id!=='knife' && st.hold.weapon.id!=='glock' ? 'kneel' : 'crouch');
+  else if (st.air) mode='air'; else if (st.crouch) mode = sp>0.4 ? 'crouchwalk' : (st.hold && st.hold.weapon && !isMeleeId(st.hold.weapon.id) && st.hold.weapon.id!=='glock' ? 'kneel' : 'crouch');
   else if (sp>0.3) mode = sp>3.1 ? 'run' : 'walk';
   // ---- walk <-> run: one locomotion state. runK blends the imported Walk clip into the procedural run (feet stay
   // in phase: the clip's footfalls are locked to the run cycle), sprintK blends run into sprint.
@@ -440,10 +463,10 @@ function _animateCharacter(rig, st, dt){
     solveLegIK(rig, rig.legR, rootPt(rig,0.12,0.12,-0.78), rootPt(rig,0.2,1.2,-0.6)); plantFoot(rig, rig.legR, -0.6);
     solveLegIK(rig, rig.legL, rootPt(rig,-0.16,0.1,0.02), rootPt(rig,-0.6,0.5,-0.6)); plantFoot(rig, rig.legL, 0.3);
   } else if (mode==='sit'){
-    // seated on the e-bike: hips down on the seat, knees forward, feet on the footboard
-    targetY=-0.4; lean=0.16;
-    solveLegIK(rig, rig.legR, rootPt(rig,0.17,0.22,-0.4), rootPt(rig,0.3,0.9,-1.4)); plantFoot(rig, rig.legR, 0);
-    solveLegIK(rig, rig.legL, rootPt(rig,-0.17,0.22,-0.4), rootPt(rig,-0.3,0.9,-1.4)); plantFoot(rig, rig.legL, 0);
+    // seated on the e-bike: hips down on the seat, knees forward, feet on the footboard; on a bench the feet rest on the floor
+    const fy=st.bench?0.04:0.22, fz=st.bench?-0.5:-0.4; targetY=st.bench?-0.45:-0.4; lean=st.bench?0.06:0.16;
+    solveLegIK(rig, rig.legR, rootPt(rig,0.17,fy,fz), rootPt(rig,0.3,0.9,-1.4)); plantFoot(rig, rig.legR, 0);
+    solveLegIK(rig, rig.legL, rootPt(rig,-0.17,fy,fz), rootPt(rig,-0.3,0.9,-1.4)); plantFoot(rig, rig.legL, 0);
   } else if (mode==='air'){
     targetY=0.0; lean=0.1;
     solveLegIK(rig, rig.legR, rootPt(rig,0.11,0.42,-0.12), kneePole(1)); plantFoot(rig,rig.legR,-0.3);
@@ -509,6 +532,14 @@ function _animateCharacter(rig, st, dt){
     return;
   }
   if (!w){ swingArm(rig.armR, rig.phase, runAmp); swingArm(rig.armL, rig.phase, runAmp); return; }
+  if (w.id==='fists'){   // fighting stance: fists up at the chin, jabs / crosses reach forward, block covers the face
+    const F=hold.fist||{}; rig.weaponSlot.visible=false;
+    for (const arm of [rig.armR, rig.armL]){ const s=arm.side, t=F.block ? rootPt(rig, s*0.09, shoulderY+0.1, -0.26) : rootPt(rig, s*0.17, shoulderY-0.1, -0.3);
+      const pu=F.punch; if (pu && pu.side===s){ const k=pu.k, e=k<0.45?Math.sin(k/0.45*PI/2):Math.cos((k-0.45)/0.55*PI/2); t.lerp(rootPt(rig, s*0.05, shoulderY-0.03, pu.heavy?-0.66:-0.58), e); }
+      else if (s===1 && F.charge>0) t.add(rootPt(rig,0,0,0).sub(rootPt(rig,-0.03*F.charge,0,-0.12*F.charge)));
+      solveArmIK(rig, arm, t, rootPt(rig, s*0.75, shoulderY-0.75, 0.15)); arm.ha.quaternion.copy(rig.rest[arm.ha.name]); curlFingers(rig, s, 'knifeR'); }
+    return;
+  }
   // weapon placement (holdPivot at shoulder height, pitched with aim)
   const lowRun = hold.lowReady && !hold.firing && !st.ads;
   const moveK = (mode==='run'||mode==='crouchwalk') ? 1 : 0, sph=Math.sin(rig.phase*PI*2);

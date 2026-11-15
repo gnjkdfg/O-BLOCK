@@ -44,7 +44,6 @@ const DEFAULT_SETTINGS = {
   autoQuality: true,     // step the graphics down automatically when the game runs under 30 fps
   outlines: 'on',        // thin outline round other players (hidden by walls; off in Super Performance Mode)
   aimAssist: 'on',       // 'off' | 'on': slight slowdown while your crosshair is already on someone (no pull / lock-on)
-  botsFire: true,        // test bots shoot back
   showFps: true,
 };
 const Settings = Object.assign({}, DEFAULT_SETTINGS, Store.get('settings', {}));
@@ -81,7 +80,7 @@ function loadScript(src){ return new Promise((res,rej)=>{ const s=document.creat
 
 // One firearm per loadout (+ knife for everyone) and a limited equipment budget.
 const FIREARMS = ['glock','drako','sniper','shotgun','ar15','mp7','sawedoff'];
-const PRIMARIES = ['drako','sniper','shotgun','ar15','mp7'], SECONDARIES = ['glock','sawedoff'], MELEES = ['knife','taser'];
+const PRIMARIES = ['drako','sniper','shotgun','ar15','mp7'], SECONDARIES = ['glock','sawedoff'], MELEES = ['knife','fists','taser'];
 const EQUIP_BUDGET = 3;                               // total grenades + mines carried
 // firearm = the primary weapon (name kept so older saves load), secondary = pistol slot, melee = knife or Taser
 const DEFAULT_LOADOUT = { firearm:'drako', secondary:'glock', melee:'knife', flash:2, mine:1 };
@@ -104,15 +103,15 @@ const ACTIONS = [
   ['forward','Move forward','KeyW'],['back','Move back','KeyS'],['left','Move left','KeyA'],['right','Move right','KeyD'],
   ['jump','Jump / vault','Space'],['sprint','Sprint','ShiftLeft'],['crouch','Crouch','KeyC'],['slide','Slide (while sprinting)','KeyC'],['prone','Prone (toggle)','KeyZ'],
   ['fire','Shoot / attack','Mouse0'],['aim','Aim / heavy stab','Mouse2'],['reload','Reload','KeyR'],
-  ['firearm','Swap primary / secondary','Digit1'],['knife','Knife / Taser','Digit2'],['firemode','Glock fire mode (Switch)','KeyB'],
-  ['interact','Interact / search / pick up','KeyF'],['leanL','Lean left','KeyQ'],['leanR','Lean right','KeyE'],
+  ['firearm','Swap primary / secondary','Digit1'],['knife','Melee: knife / fists / Taser','Digit2'],['firemode','Glock fire mode (Switch)','KeyB'],
+  ['interact','Interact / search / pick up','KeyF'],['block','Block (fists, hold)','KeyF'],['leanL','Lean left','KeyQ'],['leanR','Lean right','KeyE'],
   ['grenade','Throw flash grenade','KeyG'],['mine','Place landmine','KeyX'],['smoke','Use item: blunt','KeyH'],['beer','Use item: beer','KeyK'],['zyn','Use item: Zyn','KeyJ'],['nic','Kill streak: Tap the Nic','KeyT'],['ability','Character ability','KeyY'],
   ['flashlight','Flashlight (toggle)','KeyU'],['thermal','Sniper thermal (toggle)','KeyN'],
   ['camera','Switch camera','KeyV'],['scoreboard','Scoreboard (hold)','Tab'],['loadout','In-game loadout','KeyL'],['pause','Pause','KeyP'],
 ];
 // groups for the control guide / settings
-const ACTION_GROUPS = { Movement:['forward','back','left','right','jump','sprint','crouch','slide','prone','leanL','leanR'], Combat:['fire','aim','reload','firearm','knife','firemode','grenade','mine','flashlight','thermal'], Interaction:['interact','smoke','beer','zyn','nic','ability'], Interface:['camera','scoreboard','loadout','pause'] };
-const GAME_VERSION = 'v0.9.0';
+const ACTION_GROUPS = { Movement:['forward','back','left','right','jump','sprint','crouch','slide','prone','leanL','leanR'], Combat:['fire','aim','block','reload','firearm','knife','firemode','grenade','mine','flashlight','thermal'], Interaction:['interact','smoke','beer','zyn','nic','ability'], Interface:['camera','scoreboard','loadout','pause'] };
+const GAME_VERSION = 'v0.10.2';
 /* Map compression (Update 5): the block in the middle (|x|,|z| <= MAP_CORE: towers A-D, courtyard, ring road) stays where
    it is; everything outside it is pulled toward the centre by MAP_K. Only the ANCHOR of each object (its centre, or both
    ends of a fence / wall / road) is moved — object sizes never change. Applied once, at map build time. */
@@ -133,7 +132,7 @@ Store.set('crouchFix', true);
    developer menu's "Copy my controls".) */
 const RECOMMENDED_CONTROLS = {
   binds:{forward:'KeyW',back:'KeyS',left:'KeyA',right:'KeyD',jump:'Space',sprint:'ShiftLeft',crouch:'KeyC',slide:'KeyC',prone:'KeyZ',
-         fire:'Mouse0',aim:'KeyE',reload:'KeyR',firearm:'Digit1',knife:'Digit2',firemode:'KeyB',interact:'KeyF',leanL:'KeyQ',leanR:'Digit3',
+         fire:'Mouse0',aim:'KeyE',reload:'KeyR',firearm:'Digit1',knife:'Digit2',firemode:'KeyB',interact:'KeyF',block:'KeyF',leanL:'KeyQ',leanR:'Digit3',
          grenade:'KeyG',mine:'KeyX',smoke:'KeyH',beer:'KeyK',zyn:'KeyJ',nic:'KeyT',ability:'KeyY',flashlight:'KeyU',thermal:'KeyN',
          camera:'KeyV',scoreboard:'Tab',loadout:'KeyL',pause:'KeyP'},
   sens:1, leanMode:'toggle', crouchMode:'toggle',

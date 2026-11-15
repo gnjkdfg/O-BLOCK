@@ -148,6 +148,23 @@ const VM = {
       const hq=basisQ(NT.palm, NT.fingers);
       FA.R.root.scale.setScalar(1); FA.pose(FA.R,'vape'); FA.place(FA.R, gp, hq, FP_ELBOW.nic); FA.hide(FA.L);
       this.holdItem(this.blunt, 0.6*e, true);
+    } else if (w.id==='fists'){
+      // fists: guard up; jabs alternate hands, a heavy winds the right hand back while charging and throws a cross; F raises both to the face
+      this.blunt.visible=false; this.nic.visible=false; this.can.visible=false; this.zyn.visible=false;
+      const F=Fists.pose(), bb=new V3(Math.cos(this.bobPh)*bob - this.lagX, -Math.abs(Math.sin(this.bobPh))*bob + this.lagY, 0);
+      this.fistBlockK=damp(this.fistBlockK||0, F.block?1:0, 14, dt);
+      for (const [arm, s] of [[FA.R,1],[FA.L,-1]]){
+        const guard=new V3(0.12*s, -0.12+(s<0?0.02:0), s<0?-0.36:-0.32), qG=basisQ([-s,0,0],[0.08*s,0.8,-0.6]);
+        let pos=guard.clone(), q=qG.clone();
+        const bp=new V3(0.07*s,-0.055,-0.28), qB=basisQ([0,0,1],[0.05*s,1,-0.12]), bk=this.fistBlockK;
+        pos.lerp(bp,bk); q.slerp(qB,bk);
+        if (s===1 && F.charge>0 && !F.punch){ const c=F.charge; pos.add(new V3(0.04*c,-0.02*c,0.1*c)); }          // wind-up
+        const pu=F.punch; if (pu && pu.side===s){ const k=pu.k, e=k<0.45 ? Math.sin(k/0.45*PI/2) : Math.cos((k-0.45)/0.55*PI/2);
+          const hit=pu.heavy ? new V3(0.0,-0.05,-0.66) : new V3(0.035*s,-0.065,-0.6);
+          pos.lerp(hit,e); q.slerp(basisQ([-0.3*s,-0.95,0],[0,0.08,-1]),e); }
+        pos.add(bb); FA.R.root.scale.setScalar(1); FA.L.root.scale.setScalar(1);
+        FA.pose(arm,'fist'); FA.place(arm, pos, q, s>0?FP_ELBOW.hipR:FP_ELBOW.hipL);
+      }
     } else if (HP){
       this.blunt.visible=false; this.nic.visible=false; this.can.visible=false; this.zyn.visible=false;
       const EA=HP.elbowAds||{R:FP_ELBOW.adsR, L:FP_ELBOW.adsL};

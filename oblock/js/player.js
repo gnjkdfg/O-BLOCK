@@ -144,7 +144,7 @@ function stepPlayer(dt){
   // crouch: Hold mode = while the key is held; Toggle mode = press once to crouch, again to stand (Settings → Controls).
   // Prone stays on its own key. Sprinting or jumping cancels a toggled crouch.
   const crouchKey = Settings.crouchMode==='toggle' ? !!P.crouchToggle : Input.held('crouch');
-  const wantCrouch = crouchKey || (Input.held('slide') && !P.slide && !P.sprinting);
+  const wantCrouch = crouchKey || (Input.held('slide') && !P.slide && !P.sprinting) || !!P.seated;   // seated on a bench: eyes at seat height
   if (P.prone && (P.jumpQueued || !P.grounded)){ P.jumpQueued=false; setProne(false); }
   if (P.slide){
     const S=P.slide; S.t+=dt;
@@ -162,10 +162,10 @@ function stepPlayer(dt){
     P.height = P.prone ? 0.55 : P.crouch? 1.1 : 1.7;
     if (P.crouchToggle && Input.held('sprint') && f>0 && !P.prone && canStand()){ P.crouchToggle=false; P.crouch=false; }
     const sprintHeld = Input.held('sprint') && f>0 && !P.crouch && !P.prone && Arsenal.adsK<0.3 && !P.smoking && !P.using && !P.exhausted && P.stamina>0;
-    P.sprinting = sprintHeld && !(Arsenal.trigger && Arsenal.cur!=='knife');
+    P.sprinting = sprintHeld && !(Arsenal.trigger && !isMeleeId(Arsenal.cur)) && !Fists.block;
     if (P.sprinting) useStamina(13*dt);
-    const wmul = (Arsenal.def.moveMul||1) * (P.carrying?0.9:1);
-    const speed = (P.prone? 1.1 : P.crouch? 2.2 : P.sprinting? 7.4 : 4.6) * wmul * (Arsenal.adsK>0.5?0.62:1) * (P.smoking||P.using?0.7:1) * StreakAuthority.speedMul('player');
+    const wmul = (Arsenal.def.moveMul||1) * (P.carrying?0.9:1) * (Fists.block?0.6:1);   // blocking: slow guarded steps
+    const speed = (P.prone? 1.1 : P.crouch? 2.2 : P.sprinting? 7.4 : 4.6) * wmul * (Arsenal.adsK>0.5?0.62:1) * (P.smoking||P.using?0.7:1) * StreakAuthority.speedMul('player') * (Dev.enabled ? Dev.speed : 1);   // mod menu speed hack
     const sy=Math.sin(P.yaw), cy=Math.cos(P.yaw);
     let wx=-sy*f+cy*r, wz=-cy*f-sy*r; const wl=Math.hypot(wx,wz); if (wl>0){ wx=wx/wl*speed; wz=wz/wl*speed; }
     if (P.jumpQueued){
@@ -240,6 +240,7 @@ function updateSearch(dt){
 }
 function interact(){
   if (!P.alive || P.anim) return;
+  if (Arena.on){ if (Arena.seat){ Arena.stand(); return; } const s=Arena.nearSeat(); if (s && !Arena.fighter()){ Arena.sit(s); return; } }
   if (P.riding){ Rides.dismount(); return; }
   if (P.ladder){ detachLadder(false); return; }
   if (Pickups.tryPick()) return;
@@ -284,7 +285,7 @@ function killPlayer(by, hitDir){
   P.alive=false; P.deadT=0; P.hp=0; P.deaths++; P.ladder=null; P.anim=null; P.inCar=null; P.smoking=null; P.using=null; P.search=null; P.bluntCap=false; endSlide(); Effects.reset();
   Arsenal.trigger=false; Arsenal.ads=false; Snd.autoStop(); Snd.breath(0);
   const fa=Arsenal.firearm, am=Arsenal.ammo[fa];
-  Pickups.drop(P.pos, fa, Math.max(weaponDef(fa).mag, am ? Math.min(am.res,weaponDef(fa).mag*2) : 0));
+  if (fa && WEAPON_DEFS[fa] && WEAPON_DEFS[fa].kind!=='melee') Pickups.drop(P.pos, fa, Math.max(weaponDef(fa).mag, am ? Math.min(am.res,weaponDef(fa).mag*2) : 0));   // fists-only (Run That Fade): nothing to drop
   if (PlayerChar.rig){ PlayerChar.update(0); P.corpse=Corpses.spawn(PlayerChar.rig, hitDir||P.lastHitDir, {vel:new V3(P.vel.x,0,P.vel.z), part:P.lastHitHead?'head':null}); }
   Mode.onDeath('player', P.pos);
   Bus.emit('died', by);
@@ -355,10 +356,10 @@ const PlayerChar = {
     let reloadK=0, supportOverride=null;
     if (A.state==='reload'){ reloadK=A.stateT/A.stateDur;
       if (this.weapon && reloadK>0.12 && reloadK<0.75){ const g=this.weapon.model.localToWorld(this.weapon.grip.clone()); supportOverride=g.add(new V3(0,-0.12-Math.sin((reloadK-0.12)/0.63*PI)*0.18,0)); } }
-    const rideSit = P.riding && !P.riding.S.stand;
-    animateCharacter(rg, {speed:P.riding?0:P.speed, moveX:inv.x, moveZ:inv.z, sprint:P.sprinting, crouch:P.crouch, prone:P.prone, slide:!!P.slide, sit:rideSit,
+    const rideSit = (P.riding && !P.riding.S.stand) || !!P.seated;
+    animateCharacter(rg, {speed:P.riding?0:P.speed, moveX:inv.x, moveZ:inv.z, sprint:P.sprinting, crouch:P.crouch && !P.seated, prone:P.prone, slide:!!P.slide, sit:rideSit, bench:!!P.seated,
       air:!P.grounded&&!P.ladder&&!P.anim&&P.airT>0.12, ladder:!!P.ladder, climb:P.climb, vault:!!P.anim, vaultK:P.anim?P.anim.t:0, land:P.landT||0, pitch:P.pitch, ads:A.adsK>0.3, lean:P.lean,
-      hold:{weapon:this.weapon, kick:A.kick*(this.weapon?this.weapon.kickMul:1)*(A.cur==='glock'&&A.glockAuto?GLOCK_SWITCH_RECOIL:1), reloadK, supportOverride, firing:A.recoilP>0||A.adsK>0.3,
+      hold:{fist:Fists.pose(), weapon:this.weapon, kick:A.kick*(this.weapon?this.weapon.kickMul:1)*(A.cur==='glock'&&A.glockAuto?GLOCK_SWITCH_RECOIL:1), reloadK, supportOverride, firing:A.recoilP>0||A.adsK>0.3,
         lowReady:P.speed>3.2 && !P.crouch && !P.riding, smoking:!!P.smoking||!!U, nicT:Perks.nic?Perks.nic.t:null, nic:this.nic, smokeT:P.smoking?P.smoking.t:U?3*U.t/U.dur:0, blunt:item||this.blunt, swing: A.swing>0 ? 1-A.swing/A.swingDur : 0}}, dt);
     if (P.stunT>0) stunPose(rg, (P.stunDur||5)-P.stunT, P.stunDur||5, P.stunDir); else stunPose(rg,-1);   // tased: ragdoll (third person + the body you see)
   },
@@ -385,12 +386,12 @@ const Rig = {
     const A=Arsenal;
     this.scoped = A.def.scope && A.adsK>0.85 && P.alive && !P.inCar;
     // rifle optics: aiming in third person goes through the real scope on the viewmodel
-    this.optic = !A.def.scope && A.def.optic && A.adsK>0.6 && P.alive && !P.inCar && A.cur!=='knife';
+    this.optic = !A.def.scope && A.def.optic && A.adsK>0.6 && P.alive && !P.inCar && !isMeleeId(A.cur);
     const aspect=camera.aspect, hf=Settings.fov*PI/180;
     // sprint FOV kick (third person) and the camera-motion slider
     const cm=(Settings.camMotion??100)/100, tp=this.mode==='third' && !this.scoped && !this.optic;
     this.sprintK=damp(this.sprintK||0, tp && P.sprinting && P.speed>5 ? 1 : 0, CAM.sprintK, dt);
-    let zoom = A.cur==='knife'?1 : lerp(1, A.def.adsZoom||1, A.adsK);
+    let zoom = isMeleeId(A.cur)?1 : lerp(1, A.def.adsZoom||1, A.adsK);
     if (P.sprinting) zoom*=1.04; if (P.slide) zoom*=1.06;
     const nsq = Perks.nic ? NIC_CFG.fovSqueeze*cm*Math.sin(nicPhase(Perks.nic.t).hold*PI) : 0;    // slow push-in during the Nic hit
     const vf = 2*Math.atan(Math.tan(hf/2)*zoom/aspect)*180/PI + this.sprintK*CAM.sprintFov*cm - nsq;
@@ -420,6 +421,7 @@ const Rig = {
     if (P.stunT>0 && R && R.stun){ const i=R.idx.head*3; this.stunEye=new V3(R.x[i],R.x[i+1]+0.06,R.x[i+2]); this.stunK=damp(this.stunK||0,1,6,dt); }
     else if (this.stunK>0.001) this.stunK=damp(this.stunK,0,5,dt);
     if (this.stunK>0.001){ camera.rotation.z+=0.35*this.stunK; camera.rotation.x+=0.25*this.stunK; }
+    if (Fists.jolt>0){ const j=Math.sin(Fists.jolt*PI*0.5); camera.rotation.x+=0.05*j; camera.rotation.z+=0.025*j; }   // punched: the view snaps back once (no shake)
     if (Math.abs(target2-this.eyeY) > 1.2 || P.ladder || P.anim) this.eyeY = target2;
     else this.eyeY = damp(this.eyeY, target2, P.slide?10:18, dt);
     const right=new V3(Math.cos(P.yaw),0,-Math.sin(P.yaw));

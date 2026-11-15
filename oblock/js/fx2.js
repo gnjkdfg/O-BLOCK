@@ -129,7 +129,7 @@ function surfaceAt(x,z,y){
 
 // player's shot: flash on the viewmodel (first person / optic) or on the third-person gun, plus a casing from the ejection port
 function playerShotFX(d){
-  const id=Arsenal.cur; if (id==='knife') return;
+  const id=Arsenal.cur; if (isMeleeId(id)) return;
   const breakAction = id==='sawedoff' || id==='taser';     // no casing per shot: the sawed-off drops its shells when opened to reload
   const spec=flashSpec(id, !!d.auto), fp=(Rig.mode==='first'||Rig.optic);
   let port, wq;

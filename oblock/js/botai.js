@@ -113,7 +113,6 @@ function eyeOf(t){ return t===P ? new V3(P.pos.x, P.pos.y+P.height-0.12, P.pos.z
 function chestOf(t){ return t===P ? new V3(P.pos.x, P.pos.y+Math.max(0.35,P.height*0.65), P.pos.z) : new V3(t.pos.x, t.pos.y+(t.crouch?0.8:1.15), t.pos.z); }
 function velOf(t){ return t===P ? P.vel : (t.vel||new V3()); }
 function aliveT(t){ return t===P ? (P.alive && Game.state==='playing' && !P.inCar) : t.alive; }
-function nameOfT(t){ return t===P ? 'YOU' : t.name; }
 // player hit volume for bot bullets (head sphere + body spheres following stance)
 function playerRayHit(o,dir,maxT){
   const h=P.height; let best=maxT, head=false, any=false;
@@ -228,7 +227,7 @@ class Bot {
     if (lineOfSight(eyeOf(this), eyeOf(t))){ this.aimPart='head'; return true; }
     return false;
   }
-  enemies(){ const out=[]; if (aliveT(P) && Settings.botsFire) out.push(P); for (const b of Bots.list) if (b!==this && b.alive) out.push(b); if (Net.inMatch) for (const e of Net.targets()) out.push(e);
+  enemies(){ const out=[]; if (aliveT(P) && !(Dev.enabled && Dev.botsOff)) out.push(P); for (const b of Bots.list) if (b!==this && b.alive) out.push(b); if (Net.inMatch) for (const e of Net.targets()) out.push(e);
     if (Net.gang){ const mine=Net.teamOf(this); return out.filter(t=>Net.teamOf(t)!==mine); }   // Gang Wars: never shoot your own gang
     return out; }
   perceive(){
@@ -267,7 +266,7 @@ class Bot {
     if (!this.path || this.pathI>=this.path.length){ this.speed=damp(this.speed,0,8,dt); return true; }
     const [tx,tz]=this.path[this.pathI]; let dx=tx-this.pos.x, dz=tz-this.pos.z; const d=Math.hypot(dx,dz);
     if (d<0.45){ this.pathI++; return this.pathI>=this.path.length; }
-    this.speed=damp(this.speed,speed,6,dt);
+    this.speed=damp(this.speed,speed*StreakAuthority.speedMul('bot'+this.i),6,dt);
     const step=Math.min(d,this.speed*dt); this.pos.x+=dx/d*step; this.pos.z+=dz/d*step;
     resolveHorizontal(this.pos, this.crouch?1.2:1.7, 0.35);
     const {ground}=probeVertical(this.pos.x,this.pos.z,this.pos.y+0.6); this.pos.y=ground;
@@ -552,7 +551,6 @@ const Bots = {
   },
 };
 // is the player's flashlight pointed at this bot?
-function glareOn(b){ const d=new V3(); camera.getWorldDirection(d); const to=new V3(b.pos.x,b.pos.y+1.3,b.pos.z).sub(camera.position).normalize(); return d.dot(to)>0.97; }
 
 // ---------------------------------------------------------------- Deathmatch rules (set before the match by the local host; locked once it starts)
 const MATCH_DEFAULTS = { time:0, kills:20, bots:7, difficulty:'normal', tie:'tie' };

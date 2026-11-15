@@ -11,7 +11,6 @@
 const ZA_DEFAULTS = { variant:'hold', time:300, classicHold:30, bots:7, difficulty:'normal', spawns:'all', respawn:'drop', resetAfter:20 };
 const ZARules = Object.assign({}, ZA_DEFAULTS, Store.get('zaRules',{}));
 function saveZARules(){ Store.set('zaRules', ZARules); }
-const HOLD_TIME = 30;     // classic variant (kept for the rules text)
 const BACKPACK_HOME = {x:-7, y:0.42, z:-5};   // default: on top of the courtyard planter (tree removed)
 // objective spawn points: one is picked per round; each is validated against the colliders at match start
 const ZA_SPAWNS = [ {x:-7,y:0.42,z:-5}, {x:-14.5,y:0,z:4}, {x:0.5,y:0,z:3.5}, {x:-15,y:0,z:-15.5}, {x:0.5,y:0,z:-16}, {x:-7,y:0,z:6.5} ];
@@ -61,13 +60,14 @@ const MODE_RULES = {
   gang:     {title:'GANG WARS', firearms:['glock','drako','sniper','shotgun','ar15','mp7','sawedoff','taser'], switch:true},
   dm:       {title:'DEATHMATCH', firearms:['glock','drako','sniper','shotgun','ar15','mp7','sawedoff','taser'], switch:true},
   backpack: {title:'THE FIGHT FOR ZA', firearms:['glock'], switch:false},
+  fade:     {title:'RUN THAT FADE', firearms:['glock'], switch:false},          // private matches only: fists in the cage
 };
 const Mode = {
   cur:'dm', ended:false, winner:null, mesh:null, beam:null, clock:0,
   title(){ return MODE_RULES[this.cur].title; },
   allowedFirearm(id){ const f=MODE_RULES[this.cur].firearms; return f.includes(id) ? id : f[0]; },
   allowSwitch(){ return MODE_RULES[this.cur].switch; },
-  label(){ return this.cur==='gang' ? 'GANG WARS' : this.cur==='dm' ? 'DEATHMATCH · '+rulesText() : 'THE FIGHT FOR ZA · '+zaRulesText(); },
+  label(){ return this.cur==='fade' ? 'RUN THAT FADE · 1v1 FISTS IN THE CAGE' : this.cur==='gang' ? 'GANG WARS' : this.cur==='dm' ? 'DEATHMATCH · '+rulesText() : 'THE FIGHT FOR ZA · '+zaRulesText(); },
   rules(){ return this.cur==='backpack' ? ZARules : MatchRules; },
   init(){
     this.mesh=makeBagModel(); this.mesh.scale.setScalar(1.6); this.mesh.visible=false; scene.add(this.mesh);

@@ -31,7 +31,7 @@ class RemoteEnt {
     g.fillStyle='#999'; g.font='9px sans-serif'; g.fillText(this.kind==='bot'?'BOT':'PLAYER',108,15);
     g.fillStyle='#333'; g.fillRect(14,21,100,7); g.fillStyle='#4fd06a'; g.fillRect(14,21,Math.max(0,Math.min(100,this.hp)),7);
     if (this.dev){ g.fillStyle='#c0262b'; g.fillRect(6,4,26,11); g.fillStyle='#fff'; g.font='bold 8px sans-serif'; g.fillText('DEV',19,12); } this.label.tex.needsUpdate=true; }
-  snap(a){ this.tpos.set(a[1],a[2],a[3]); this.tyaw=a[4]; this.pitch=a[5]; if (a[6]!==this.w) this.setWeapon(a[6]); const alive=!!a[7]; if (alive && !this.alive) this.pos.copy(this.tpos); this.alive=alive; if (Math.round(this.hp)!==a[8]){ this.hp=a[8]; this.drawLabel(); } this.kills=a[9]; this.deaths=a[10]; this.crouch=!!(a[12]&1); }
+  snap(a){ this.tpos.set(a[1],a[2],a[3]); this.tyaw=a[4]; this.pitch=a[5]; if (a[6]!==this.w) this.setWeapon(a[6]); const alive=!!a[7]; if (alive && !this.alive) this.pos.copy(this.tpos); this.alive=alive; if (Math.round(this.hp)!==a[8]){ this.hp=a[8]; this.drawLabel(); } this.kills=a[9]; this.deaths=a[10]; this.crouch=!!(a[12]&1); this.seated=!!(a[12]&2); }
   update(dt){
     const prev=this.pos.clone(); this.pos.lerp(this.tpos, 1-Math.exp(-dt/NET_CFG.interp)); this.vel.copy(this.pos).sub(prev).divideScalar(Math.max(dt,1e-3)); this.speed=Math.hypot(this.vel.x,this.vel.z);
     this.yaw+=angleDiff(this.tyaw,this.yaw)*Math.min(1,dt*12);
@@ -44,7 +44,8 @@ class RemoteEnt {
     if (Perf.potato || Settings.perf){ this.animAcc=(this.animAcc||0)+dt; if (this.pos.distanceTo(camera.position)>(Settings.superPerf?22:35) && this.animAcc<1/Perf.botAnimHz()) return; dt=this.animAcc; this.animAcc=0; }
     if (this.ride){ animateCharacter(rg,{speed:0, sit:!this.ride.S.stand, pitch:this.pitch, hold:{weapon:this.weapon, firing:true}}, dt); return; }
     if (this.stunT>0){ this.stunT=Math.max(0,this.stunT-dt); animateCharacter(rg,{speed:0, pitch:-0.2, hold:{weapon:this.weapon}}, dt); stunPose(rg, this.stunDur-this.stunT, this.stunDur, this.stunDir); if (this.stunT<=0) stunPose(rg,-1); return; }
-    animateCharacter(rg,{speed:this.speed, moveX:inv.x, moveZ:inv.z, sprint:this.speed>6, crouch:this.crouch, pitch:this.pitch, hold:{weapon:this.weapon, firing:true}}, dt);
+    if (this.fist && this.fist.punch){ const p=this.fist.punch; p.t+=dt; p.k=p.t/p.dur; if (p.k>=1) this.fist.punch=null; }
+    animateCharacter(rg,{speed:this.seated?0:this.speed, sit:this.seated, bench:this.seated, moveX:inv.x, moveZ:inv.z, sprint:this.speed>6, crouch:this.crouch, pitch:this.pitch, hold:{weapon:this.weapon, fist:this.fist, firing:true}}, dt);
   }
   chest(){ return new V3(this.pos.x, this.pos.y+(this.crouch?0.8:1.15), this.pos.z); }
   rayHit(o,dir,maxT){ return Bot.prototype.rayHit.call(this,o,dir,maxT); }
@@ -111,22 +112,25 @@ const Net = {
       case 'ride': Rides.netRide(m); break;
       case 'rl': { const e=this.entityById(m.id); if (e && e!==P && !Bots.list.some(b=>b.netId===m.id) && e.pos && e.pos.distanceTo(P.pos)<40) Snd.reload(m.w, m.n, e.pos.clone().setY(e.pos.y+1.2)); break; }
       case 'away': if (m.id!==this.id) Bus.emit('toast',{t:(m.name||'A PLAYER').toUpperCase()+(m.on?' LOST CONNECTION · '+m.secs+'s TO REJOIN':' RECONNECTED'),kind:m.on?'warn':'ok'}); break;
+      case 'fade': Arena.onState(m.st); break;
       case 'nade': case 'mine': case 'mineoff': Equip.onNet(m); break;
       case 'teamnext': Bus.emit('toast',{t:'YOU JOIN '+teamTag(m.team)+' WHEN YOU RESPAWN',kind:'ok'}); break;
       case 'teamset': { this.teamById[m.id]=m.team; const t=this.entityById(m.id); if (t===P){ this.myTeam=m.team; Bus.emit('toast',{t:'YOU ARE NOW IN '+teamTag(m.team),kind:'obj'}); } else if (t){ t.team=m.team; t.drawLabel&&t.drawLabel(); } for (const e of this.ents.values()) e.drawLabel&&e.drawLabel(); break; }
-      case 'reject': this._lastRej=m; if (m.what==='ride') Rides.pendingId=null; if (m.what==='nade'||m.what==='mine') Equip.onNet(m);
+      case 'reject': this._lastRej=m; if (m.what==='dev') Bus.emit('toast',{t:'DEV · '+String(m.why).toUpperCase(),kind:'warn'}); if (m.what==='fade') Bus.emit('toast',{t:String(m.why).toUpperCase(),kind:'warn'}); if (m.what==='ride') Rides.pendingId=null; if (m.what==='nade'||m.what==='mine') Equip.onNet(m);
         if (m.what==='buy' && UI._afterBuy){ const ab=UI._afterBuy; UI._afterBuy=null; clearTimeout(UI._buyTO); UI.buyFailed(ab.name||'item', m.why); break; } if (m.what!=='hits') Bus.emit('toast',{t:'SERVER: '+m.what.toUpperCase()+' REJECTED · '+m.why.toUpperCase(),kind:'warn'}); else this.rejected=(this.rejected||0)+1; break;
       case 'start': this.startMatch(m); break;
       case 'snap': this.snap(m); break;
       case 'hit': this.onHit(m); break;
+      case 'block': { const e=this.entityById(m.id); if (e && e!==P){ e.fist=e.fist||{}; e.fist.block=!!m.on; } break; }
       case 'kill': this.onKill(m); break;
       case 'respawn': this.onRespawn(m); break;
-      case 'shotfx': { const e=this.entityById(m.by); if (e && e!==P && m.o){ const o=new V3(...m.o); Snd.shot(m.w,{pos:o, suppressed:m.sup}); if (m.e) m.w==='taser' ? FX.wire(o.clone().setY(o.y+1.4),new V3(...m.e),false) : FX.tracer(o,new V3(...m.e),'#ffb070'); if (!m.sup) Pings.add(o); } break; }
+      case 'shotfx': { const e=this.entityById(m.by); if (e && e!==P && m.w==='fists'){ e.fist=e.fist||{}; e.fist.punch={side:m.heavy?1:(e.fistSide=-(e.fistSide||1)), heavy:!!m.heavy, t:0, k:0, dur:m.heavy?0.5:0.26}; Snd.swing(); break; }
+        if (e && e!==P && m.o){ const o=new V3(...m.o); Snd.shot(m.w,{pos:o, suppressed:m.sup}); if (m.e) m.w==='taser' ? FX.wire(o.clone().setY(o.y+1.4),new V3(...m.e),false) : FX.tracer(o,new V3(...m.e),'#ffb070'); if (!m.sup) Pings.add(o); } break; }
       // Taser hit, decided by the server: you (no control for 5 s), one of the host's bots, or another player
       case 'stun': { const d=m.dur||5; this._stunSeen=true;
         const src=this.entityById(m.by), tgt=this.entityById(m.id), dir=src&&tgt&&src.pos&&tgt.pos ? tgt.pos.clone().sub(src.pos) : null;   // fall away from the shooter
-        if (m.id===this.id){ if (!(P.stunT>0)){ P.stunT=d; P.stunDur=d; P.stunDir=dir; Arsenal.cancelReload(); Arsenal.trigger=false; Snd.zap(); Bus.emit('toast',{t:'TASED · '+d+' s',kind:'warn'}); } }
-        else { const b=Bots.list.find(x=>x.netId===m.id); if (b) b.stun(d, dir); else { const e=this.ents.get(m.id); if (e && !(e.stunT>0)){ e.stunT=d; e.stunDur=d; e.stunDir=dir; Snd.zap(e.pos.clone().setY(e.pos.y+1)); } } }
+        if (m.id===this.id){ if (!(P.stunT>0)){ P.stunT=d; P.stunDur=d; P.stunDir=dir; Arsenal.cancelReload(); Arsenal.trigger=false; Fists.reset(); if (!m.knock) Snd.zap(); Bus.emit('toast',{t:m.knock?'KNOCKED DOWN':'TASED · '+d+' s',kind:'warn'}); } }
+        else { const b=Bots.list.find(x=>x.netId===m.id); if (b) b.stun(d, dir); else { const e=this.ents.get(m.id); if (e && !(e.stunT>0)){ e.stunT=d; e.stunDur=d; e.stunDir=dir; if (!m.knock) Snd.zap(e.pos.clone().setY(e.pos.y+1)); } } }
         break; }
       // saving: confirmed only when the server's storage has actually written your progress
       case 'saved': UI.saveState('saved', m.rev); break;
@@ -141,6 +145,11 @@ const Net = {
         if (own){ Perks.abWas=true; if (m.hp) P.hp=m.hp; const A=StreakAuthority.ability('player'); if (A&&A.hpMul) setBloodHoundLook(true); } else if (b){ b.abWas=true; b.hp=m.hp; b.drawLabel(); }
         Bus.emit('toast',{t:(own?'':((this.entityById(m.id)||{}).name||'')+' · ')+m.name+' ACTIVE',kind:own?'kill':'warn'}); break; }
       case 'loot': P.items.beer=m.items.beer; P.items.blunt=m.items.blunt; P.items.zyn=m.items.zyn; for (const w in (m.ammo||{})) if (Arsenal.ammo[w]) Arsenal.ammo[w].res=m.ammo[w]; Bus.emit('loot',{found:m.found}); break;
+      case 'gift': { if (m.items){ P.items.beer=m.items.beer; P.items.blunt=m.items.blunt; P.items.zyn=m.items.zyn; } if (m.flash!==undefined) P.flash=m.flash; if (m.mines!==undefined) P.mine=m.mines;
+        for (const w in (m.ammo||{})) if (Arsenal.ammo[w]) Arsenal.ammo[w].res=m.ammo[w];
+        const nm=m.what==='cash'?'$'+m.n.toLocaleString():m.what.startsWith('own:')?(((CHARACTERS[m.what.slice(4)]||WEAPON_DEFS[m.what.slice(4)]||{}).name)||m.what.slice(4).replace(/^att:/,'').toUpperCase()):m.what==='ammo'?'AMMO':(m.n>1?m.n+' ':'')+m.what.toUpperCase();
+        Bus.emit('toast',{t:'YOU RECEIVED '+nm,kind:'ok'}); break; }
+      case 'devok': Bus.emit('toast',{t:'DEV · GAVE '+m.name.toUpperCase()+' '+String(m.what).toUpperCase(),kind:'ok'}); break;
       case 'used': P.hp=m.hp; P.items.beer=m.items.beer; P.items.blunt=m.items.blunt; P.items.zyn=m.items.zyn; break;
       case 'correct': P.pos.set(...m.pos); break;
       case 'tag': { const e=this.ents.get(m.id); if (e){ e.dev=m.dev; e.drawLabel(); } break; }
@@ -150,7 +159,7 @@ const Net = {
   },
   // ---- match lifecycle
   startMatch(m){
-    this.inMatch=true; this.matchId=m.matchId; this.settings=m.settings; this.za=null; this.clock=m.clock||0; this.rejected=0;
+    this.inMatch=true; this.matchId=m.matchId; this.settings=m.settings; if (m.settings.mode==='fade') Arena.enter(); else Arena.exit(); if (m.fade) Arena.onState(m.fade); this.za=null; this.clock=m.clock||0; this.rejected=0;
     this.gang = m.settings.mode==='gang'; if (this.gang && m.settings.teams) GANGS=m.settings.teams; this.teamKills=GANGS.map(()=>0); if (m.tk) this.teamKills=m.tk; this.teamById={}; this.myTeam=null;
     for (const d of m.ents){ if (d.team!==undefined) this.teamById[d.id]=d.team; if (d.id===this.id && d.team!==undefined) this.myTeam=d.team; }
     for (const e of this.ents.values()) e.remove(); this.ents.clear();
@@ -171,7 +180,7 @@ const Net = {
     }
     Game.state='playing'; UI.show(null);
   },
-  leaveMatch(why){ this.inMatch=false; this.gang=false; this.myTeam=null; GANGS=TEAM_DEFAULTS.slice(0,2); for (const b of Bots.list){ b.team=undefined; b.drawLabel&&b.drawLabel(); } for (const e of this.ents.values()) e.remove(); this.ents.clear();
+  leaveMatch(why){ Arena.exit(); this.inMatch=false; this.gang=false; this.myTeam=null; GANGS=TEAM_DEFAULTS.slice(0,2); for (const b of Bots.list){ b.team=undefined; b.drawLabel&&b.drawLabel(); } for (const e of this.ents.values()) e.remove(); this.ents.clear();
     if (this.lookBackup){ Object.assign(CharLook,this.lookBackup); this.lookBackup=null; Game.applyCharacter(); }
     if (this.zaBackup){ Object.assign(ZARules,this.zaBackup); this.zaBackup=null; } if (this.mrBackup){ Object.assign(MatchRules,this.mrBackup); this.mrBackup=null; }
     if (why) Bus.emit('toast',{t:why.toUpperCase(),kind:'warn'}); },
@@ -188,6 +197,7 @@ const Net = {
   onHit(m){
     const t=this.entityById(m.target);
     if (m.by===this.id) { Bus.emit('hit',{head:m.head, kill:m.hp<=0}); Snd.hitmarker(m.head); }
+    if (m.w==='fists'){ if (t && t!==P) punchFlinch(t); if (t) Snd.punch(t===P?P.pos:t.pos.clone().setY(t.pos.y+1.3), m.dmg>=16, !!m.blocked); if (t===P) Fists.jolt=m.blocked?0.4:1; }
     if (t===P){ P.hp=m.hp; P.lastHurt=performance.now()/1000; Snd.hurt(); const src=this.entityById(m.by); let ang=0; if (src&&src.pos){ ang=Math.atan2(-(src.pos.x-P.pos.x),-(src.pos.z-P.pos.z))-P.yaw; } Bus.emit('hurt',{n:m.dmg, ang}); }
     else if (t instanceof Bot){ t.hp=m.hp; t.drawLabel(); t.lastHurt=performance.now()/1000; const src=this.entityById(m.by); if (src && !t.target){ t.target=src; } }
     else if (t){ t.hp=m.hp; t.drawLabel(); }
@@ -196,11 +206,12 @@ const Net = {
     if (m.tk) this.teamKills=m.tk;
     const t=this.entityById(m.target), k=this.entityById(m.by), wn=WEAPON_DEFS[m.w]?WEAPON_DEFS[m.w].name:m.w==='mine'?'LANDMINE':'—';
     const nm=e=>e===P?'YOU':e?e.name:'—';
-    if (k===P) Bus.emit('kill',{victim:nm(t), weapon:wn, head:m.head}); else Bus.emit('killfeed',{killer:nm(k), victim:nm(t), weapon:wn});
-    if (t===P) killPlayer(nm(k));
+    if (m.w==='mystery') Bus.emit('killfeed',{victim:nm(t), mystery:true});      // no killer, no weapon: they just drop
+    else if (k===P) Bus.emit('kill',{victim:nm(t), weapon:wn, head:m.head}); else Bus.emit('killfeed',{killer:nm(k), victim:nm(t), weapon:wn});
+    if (t===P) killPlayer(m.w==='mystery' ? null : nm(k));
     else if (t instanceof Bot){ t.alive=false; t.deadT=0; t.label.s.visible=false; Corpses.spawn(t.rig,new V3(0,0,1)); t.rig.root.visible=false; t.target=null; }
     else if (t){ t.alive=false; Corpses.spawn(t.rig,new V3(0,0,1)); t.rig.root.visible=false; }
-    if (m.by===this.id){ const s=StreakAuthority.kill('player'); }
+    if (m.by===this.id && m.target!==this.id) StreakAuthority.kill('player');   // your own death never counts as a kill
   },
   onRespawn(m){
     if (m.id===this.id){ P.pos.set(...m.pos); P.yaw=m.yaw; P.vel.set(0,0,0); P.hp=m.hp; P.alive=true; P.crouch=false; P.prone=false; P.stamina=staminaMax(); P.exhausted=false; P.bluntCap=false; Arsenal.reset(); Bus.emit('respawn'); return; }
@@ -216,7 +227,7 @@ const Net = {
   update(dt){
     if (!this.inMatch) return;
     const now=performance.now();
-    if (now-this.lastSt>1000/NET_CFG.stateHz && P.alive){ this.lastSt=now; this.send({t:'st', p:[+P.pos.x.toFixed(2),+P.pos.y.toFixed(2),+P.pos.z.toFixed(2)], yaw:+P.yaw.toFixed(3), pitch:+P.pitch.toFixed(3), f:(P.crouch||P.prone)?1:0, v:P.riding?[+P.riding.pos.x.toFixed(2),+P.riding.pos.y.toFixed(2),+P.riding.pos.z.toFixed(2),+P.riding.yaw.toFixed(3),+P.riding.lean.toFixed(3)]:undefined}); }
+    if (now-this.lastSt>1000/NET_CFG.stateHz && P.alive){ this.lastSt=now; this.send({t:'st', p:[+P.pos.x.toFixed(2),+P.pos.y.toFixed(2),+P.pos.z.toFixed(2)], yaw:+P.yaw.toFixed(3), pitch:+P.pitch.toFixed(3), f:((P.crouch||P.prone)&&!P.seated?1:0)|(P.seated?2:0), v:P.riding?[+P.riding.pos.x.toFixed(2),+P.riding.pos.y.toFixed(2),+P.riding.pos.z.toFixed(2),+P.riding.yaw.toFixed(3),+P.riding.lean.toFixed(3)]:undefined}); }
     if (this.isHost && now-this.lastBots>1000/NET_CFG.botHz){ this.lastBots=now;
       this.send({t:'bots', list:Bots.list.filter(b=>b.netId && b.alive).map(b=>({id:b.netId, p:[+b.pos.x.toFixed(2),+b.pos.y.toFixed(2),+b.pos.z.toFixed(2)], yaw:+b.yaw.toFixed(3), pitch:0, w:b.fw, char:b.rig.charId, f:b.crouch?1:0}))}); }
     for (const e of this.ents.values()) e.update(dt);
@@ -289,7 +300,8 @@ const Lobby = {
         row('Room name', (()=>{ const i=el('input'); i.type='text'; i.maxLength=24; i.value=S.name; i.disabled=locked; i.onchange=()=>put('name',i.value); return i; })());
         row('Private room code', el('span','code-sm',esc(Net.room.code)), 'players join with this code');
         row('Max players', slider('maxPlayers',2,8,1,v=>v+' players'));
-        row('Mode', drop('mode',[['dm','Deathmatch'],['gang','Gang Wars (teams)'],['backpack','The Fight for Za']]));
+        row('Mode', drop('mode',[['dm','Deathmatch'],['gang','Gang Wars (teams)'],['backpack','The Fight for Za'],['fade','Run That Fade (1v1 fists)']]));
+        if (S.mode==='fade') row('Run That Fade', el('span','muted','1v1 fist fights in an MMA cage. You pick the two fighters in the match (pause menu); everyone else waits on the benches and watches. Real players only, no bots, no weapons.'));
         if (S.mode!=='gang') row('Bots', toggle('botsOn'));
         if (S.mode==='gang') row('Bot difficulty', drop('difficulty',[['easy','Easy · 0.5× rewards'],['normal','Normal · 1×'],['hard','Hard · 1.5×'],['expert','Expert · 2×']]), 'bots per team are set in the GANG WARS tab');
         else if (S.botsOn){ row('Bot count', slider('bots',1,12,1,v=>v+' bots')); row('Bot difficulty', drop('difficulty',[['easy','Easy · 0.5× rewards'],['normal','Normal · 1×'],['hard','Hard · 1.5×'],['expert','Expert · 2×']])); }
@@ -411,10 +423,11 @@ const Lobby = {
 
 // Regenerates server/shared.json from the live game data (open the game, run copy(exportSharedData()) in the console, paste into the file).
 function exportSharedData(){
-  const W={}; for (const id of [...FIREARMS,'knife','taser']){ const d=WEAPON_DEFS[id]; W[id]={kind:d.kind, slot:WEAPON_SLOT[id], mag:d.mag||0, reserve:d.reserve||0, rpm:d.rpm||0, dmg:d.dmg, heavyDmg:d.heavyDmg, headMul:d.headMul||1, range:d.range, falloff:d.falloff||null, reloadTime:d.reloadTime||0, reload1:d.reload1||0, stun:d.stun||0, pellets:d.pellets||1, rate:d.rate||0}; }
+  const W={}; for (const id of [...FIREARMS,'knife','fists','taser']){ const d=WEAPON_DEFS[id]; W[id]={kind:d.kind, slot:WEAPON_SLOT[id], mag:d.mag||0, reserve:d.reserve||0, rpm:d.rpm||0, dmg:d.dmg, heavyDmg:d.heavyDmg, headMul:d.headMul||1, range:d.range, falloff:d.falloff||null, reloadTime:d.reloadTime||0, reload1:d.reload1||0, stun:d.stun||0, pellets:d.pellets||1, rate:d.rate||0, fist:!!d.fist, heavyMin:d.heavyMin||0, heavyRate:d.heavyRate||0, charge:d.charge||0}; }
   W.glock.switchRpm=GLOCK_SWITCH_RPM;
   const att=Object.fromEntries(Object.entries(ATTACHMENTS).filter(([k,A])=>A.mods.cap).map(([k,A])=>[k,{for:A.for, cap:A.mods.cap}]));
-  return JSON.stringify({version:GAME_VERSION, weapons:W, prog:PROG, att, abilities:CHAR_ABILITIES, characters:Object.fromEntries(Object.entries(CHARACTERS).map(([k,c])=>[k,{price:c.price||0}])), perks:PERKS,
+  const arena={o:ARENA.o, mat:ARENA.mat, fenceR:ARENA.fenceR, corners:ARENA.corners.map(c=>c.map(v=>+v.toFixed(3))), spots:ARENA.spots};
+  return JSON.stringify({version:GAME_VERSION, weapons:W, prog:PROG, att, arena, abilities:CHAR_ABILITIES, characters:Object.fromEntries(Object.entries(CHARACTERS).map(([k,c])=>[k,{price:c.price||0}])), perks:PERKS,
     items:ITEMS, loot:LOOT_TABLE, spawns:SPAWN_POINTS.map(s=>[+s[0].toFixed(2),+s[1].toFixed(2),+(s[2]||0).toFixed(3)]), zaSpawns:ZA_SPAWNS.filter(p=>p.y>0.3||pointFree(p.x,p.z,0.15,1.6,0.5)), modes:MODE_RULES,
     matchDefaults:MATCH_DEFAULTS, zaDefaults:ZA_DEFAULTS,
     colliders:colliders.filter(c=>!c.nb && !c.glass).concat(bulletCols).map(c=>[+c.cx.toFixed(3),+c.cz.toFixed(3),+c.hx.toFixed(3),+c.hz.toFixed(3),+c.y0.toFixed(3),+c.y1.toFixed(3),+c.yaw.toFixed(4)]),   // what stops bullets (see-through fence bodies excluded, their posts/rails included)

@@ -1279,6 +1279,7 @@ function buildMap(scene){
   const outer = new THREE.Mesh(new THREE.PlaneGeometry(900,900), lam('#57524a'));
   outer.rotation.x = -PI/2; outer.position.y = -0.03; scene.add(outer);
   for (const [x,z,r] of lightPools) part(F0,M.pool,0,0,0,x,0.035,z,{rx:-PI/2,geo:new THREE.PlaneGeometry(r*2,r*2)});
+  arenaColliders();   // RUN THAT FADE arena (far south; visuals built on first use)
   const meshes = Batch.flush(scene);
   Glass.build(scene);
   return {meshes, ground, groundMat, gtex};

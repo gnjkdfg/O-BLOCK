@@ -3,9 +3,9 @@
    Weapon space: origin = right-hand grip, barrel points -Z, up is +Y, metres. */
 const bx = (w,h,d) => new THREE.BoxGeometry(w,h,d);
 const cy = (r1,r2,h,s=7) => new THREE.CylinderGeometry(r1,r2,h,s);
-const WEAPON_ORDER = ['drako','sniper','shotgun','ar15','mp7','glock','sawedoff','knife','taser'];
+const WEAPON_ORDER = ['drako','sniper','shotgun','ar15','mp7','glock','sawedoff','knife','fists','taser'];
 // loadout slots: one primary, one secondary, and a melee slot (the knife, or the Taser which replaces it)
-const WEAPON_SLOT = { drako:'primary', sniper:'primary', shotgun:'primary', ar15:'primary', mp7:'primary', glock:'secondary', sawedoff:'secondary', knife:'melee', taser:'melee' };
+const WEAPON_SLOT = { drako:'primary', sniper:'primary', shotgun:'primary', ar15:'primary', mp7:'primary', glock:'secondary', sawedoff:'secondary', knife:'melee', fists:'melee', taser:'melee' };
 
 // insertAt = fraction of the reload when the new magazine seats (synced to the imported reload audio);
 // cancelling before that point keeps the old ammo count, after it the mag is already in.
@@ -43,6 +43,8 @@ const WEAPON_DEFS = {
            spreadHip:0.008, spreadAds:0.003, spreadMove:0.01,
            recoil:{p:0.015, y:0.004, kick:0.7}, recover:8, reloadTime:1.6, insertAt:0.6, adsZoom:0.9, adsTime:0.12, sound:'taser', moveMul:1.05, flash:0, noFlash:true},
   knife:  {name:'KNIFE', kind:'melee', dmg:55, heavyDmg:100, range:2.4, rate:0.48, heavyRate:1.0, moveMul:1.08},
+  // fists: jab 12, heavy 16 (quick release) to 42 (full 0.8 s charge); faster on your feet than with the knife
+  fists:  {name:'FISTS', kind:'melee', fist:true, dmg:12, heavyMin:16, heavyDmg:42, range:1.9, rate:0.34, heavyRate:0.75, charge:0.8, moveMul:1.18},
 };
 const GLOCK_SWITCH_RPM = 1100;
 const GLOCK_SWITCH_RECOIL = 1.2;     // Switch mode recoil is exactly 20% higher than semi-auto (aim climb, sideways kick and visual kick)
@@ -74,9 +76,9 @@ const ATTACHMENTS = {
   mag_drum:   {name:'Drum mag', cat:'mag', for:['glock'], part:'mag_drum', desc:'50 rounds.', pros:['+33 rounds'], cons:['Reload +30%','Movement speed -8%','ADS speed -10%'], mods:{cap:50, reload:0.30, move:-0.08, ads:-0.10}},
 };
 const SLOT_LABELS = {optic:'Optics', under:'Underbarrel', stock:'Stock', muzzle:'Muzzle', other:'Other', mag:'Magazine'};
-const WEAPON_SLOTS = { drako:['optic','under','muzzle','other'], glock:['optic','under','stock','muzzle','other','mag'], sniper:['muzzle','other'], ar15:['optic','muzzle','other'], mp7:['under','other','mag'], shotgun:['other'], sawedoff:['other'], taser:[], knife:[] };
+const WEAPON_SLOTS = { drako:['optic','under','muzzle','other'], glock:['optic','under','stock','muzzle','other','mag'], sniper:['muzzle','other'], ar15:['optic','muzzle','other'], mp7:['under','other','mag'], shotgun:['other'], sawedoff:['other'], taser:[], knife:[], fists:[] };
 const SLOT_DEFAULT = { optic:'iron', mag:'mag_std' };          // slots that cannot be empty
-const WEAPON_CATEGORY = { drako:'Compact rifle', glock:'Pistol', sniper:'Bolt-action rifle', ar15:'Assault rifle', mp7:'Submachine gun', shotgun:'Pump shotgun', sawedoff:'Sawed-off · secondary', taser:'Stun gun · replaces the knife', knife:'Melee · default' };
+const WEAPON_CATEGORY = { drako:'Compact rifle', glock:'Pistol', sniper:'Bolt-action rifle', ar15:'Assault rifle', mp7:'Submachine gun', shotgun:'Pump shotgun', sawedoff:'Sawed-off · secondary', taser:'Stun gun · replaces the knife', knife:'Melee · default', fists:'Hand to hand · replaces the knife' };
 const PAINT = {
   drako:[ {key:'metal', label:'Receiver', opts:[['Factory',null],['Blued black','#202123'],['Gunmetal','#45484c'],['FDE','#8f7a58'],['OD green','#4a5233'],['Chrome','#c9ccd0'],['Gold','#c9a23a'],['Crimson','#7e1717']]},
           {key:'furniture', label:'Furniture', opts:[['Factory wood',null],['Dark walnut','#7a4a2a'],['Black polymer','#1c1c1d'],['OD polymer','#4c5534'],['Tan polymer','#a08a62'],['Red','#8e1b1b']]},
@@ -97,6 +99,7 @@ const PAINT = {
           {key:'finish', label:'Finish', opts:[['Satin',{r:0.45,m:0.5}],['Matte',{r:0.8,m:0.15}],['Polished',{r:0.22,m:0.75}]]} ],
   taser:[ {key:'metal', label:'Body', opts:[['Factory yellow',null],['Black','#1c1c1d'],['Blue','#2357a3'],['Pink','#d8709d']]},
           {key:'finish', label:'Finish', opts:[['Satin',{r:0.5,m:0.2}],['Matte',{r:0.85,m:0.05}]]} ],
+  fists:[],
   knife:[ {key:'blade', label:'Blade', opts:[['Steel','#c9ccd1'],['Black oxide','#2a2b2e'],['Gold','#d4a937'],['Damascus','#9fa3a8'],['Blood red','#8a1c1c']]},
           {key:'handle', label:'Handle wrap', opts:[['OD cord','#ffffff'],['Black','#3a3a3a'],['Red','#b03030'],['Tan','#c2a77a'],['Blue','#4a72b8']]},
           {key:'fittings', label:'Guard & pommel', opts:[['Brass','#b08a3a'],['Black','#202022'],['Steel','#b8bcc0'],['Gold','#d8b040']]} ],
@@ -158,7 +161,6 @@ function weaponStats(id, opts={}){
   return d;
 }
 function weaponDef(id, glockAuto, cfg){ return weaponStats(id, {auto:glockAuto, cfg}); }
-const glockStats = auto => weaponStats('glock',{auto});
 // Procedural skin textures (applied to the real slide/frame materials)
 const SKIN_TEX = {};
 function skinTexture(name){
@@ -222,7 +224,6 @@ function wrapGlb(scene, scale, gripGlb){
   return {outer, inner, P, parts, mats:[...cache.values()]};
 }
 const wmat = (c, r=0.5, m=0.3, map=null) => new THREE.MeshStandardMaterial({color:c, roughness:r, metalness:m, map});
-const WOOD_TEX = canvasTex(128,64,(g,w,h)=>{ g.fillStyle='#b4783e'; g.fillRect(0,0,w,h); for (let i=0;i<40;i++){ g.strokeStyle=`rgba(${90+Math.random()*40|0},50,20,${0.25+Math.random()*0.3})`; g.lineWidth=1+Math.random()*2; g.beginPath(); const y=Math.random()*h; g.moveTo(0,y); for (let x=0;x<=w;x+=8) g.lineTo(x,y+Math.sin(x*0.08+i)*2); g.stroke(); } noise(g,w,h,14); });
 const CORD_TEX = canvasTex(64,64,(g,w,h)=>{ g.fillStyle='#1e1e1e'; g.fillRect(0,0,w,h); for (let y=0;y<h;y+=8){ for (let x=0;x<w;x+=8){ g.fillStyle=((x+y)/8)%2?'#3c4a2c':'#2a3420'; g.beginPath(); g.ellipse(x+4,y+4,4,2.5,((x+y)/8)%2?0.6:-0.6,0,PI*2); g.fill(); } } });
 const POLY_TEX = canvasTex(64,64,(g,w,h)=>{ g.fillStyle='#1b1b1c'; g.fillRect(0,0,w,h); for (let i=0;i<500;i++){ g.fillStyle=Math.random()<0.5?'#262628':'#121213'; g.fillRect(Math.random()*w,Math.random()*h,2,2);} });
 
@@ -255,11 +256,6 @@ function scopeOptics(g, z0, z1, r, kind){
 }
 // hollow housing helpers: nothing solid crosses the optical axis, so the reticle is seen through the tube
 function tubeShell(g, mat, r, len, z, seg=24){ const m=new THREE.Mesh(new THREE.CylinderGeometry(r,r,len,seg,1,true), mat); m.material.side=THREE.DoubleSide; m.rotation.x=PI/2; m.position.set(0,SCOPE_Y,z); m.castShadow=true; g.add(m); return m; }
-function boxFrame(g, add, mat, w, h, len, z, hole){   // four slabs around a square hole
-  const t=(w-hole)/2, tv=(h-hole)/2;
-  add(bx(w,tv,len),mat,0,SCOPE_Y+hole/2+tv/2,z,0,0,0,g); add(bx(w,tv,len),mat,0,SCOPE_Y-hole/2-tv/2,z,0,0,0,g);
-  add(bx(t,hole,len),mat,-hole/2-t/2,SCOPE_Y,z,0,0,0,g); add(bx(t,hole,len),mat,hole/2+t/2,SCOPE_Y,z,0,0,0,g);
-}
 function buildScope15(g, add){
   // 1.5x: compact tan body around a slim tube, thin black bezels; bolts sit on the front face outside the sight picture
   const fde=wmat('#a3967a',0.75,0.1), blk=wmat('#141415',0.5,0.4), bolt=wmat('#2a2a2b',0.4,0.7);
@@ -398,6 +394,7 @@ const HOLDS = {
   sawedoff:{tp:[0.07,-0.12,-0.2], vm:[0.11,-0.18,-0.32], ads:0.34, vmRot:[0.03,0.07,0]},
   taser:  {tp:[0.06,-0.06,-0.47], vm:[0.12,-0.16,-0.36], ads:0.38, vmRot:[0.06,0.1,0.03], vmFov:40},
   knife:  {tp:[0.22,-0.42,-0.32], vm:[0.16,-0.17,-0.36],  ads:0.34, vmRot:[0.35,0.25,0.35]},
+  fists:  {tp:[0,0,0], vm:[0,0,0], ads:0.3, vmRot:[0,0,0]},
 };
 
 // Create a weapon instance. cfg = attachment/paint config (defaults to the player's saved one).
@@ -406,6 +403,7 @@ function createWeapon(id, cfg){
   if (id==='drako'){ const d=buildDrako(); w={model:d.group, support:d.support, muzzle:d.muzzle, sight:d.sight, parts:d.parts}; }
   else if (GUN_SPEC[id]){ const d=buildImportedGun(id); w={model:d.group, support:d.support, muzzle:d.muzzle, sight:d.sight, parts:d.parts, mats:d.parts.mats}; }
   else if (id==='knife'){ const d=buildKnife(); w={model:d.group, support:null, muzzle:d.muzzle, sight:d.sight, parts:d.parts}; }
+  else if (id==='fists'){ w={model:new THREE.Group(), support:null, muzzle:new V3(), sight:new V3(), parts:{}}; }   // nothing in the hands
   else if (id==='glock'){
     const W=wrapGlb(Assets.glock, 0.032, [-1.55,2.05,0]);
     const slide=[]; W.parts.body && W.parts.body.traverse(o=>{ if (o.isMesh && ['Pistol Slide','Sight','Glock Sight','Ejection Port','Muzzle'].includes(o.material.name)) slide.push(o); });
@@ -427,10 +425,9 @@ function createWeapon(id, cfg){
   applyWeaponConfig(w);
   return w;
 }
-const _col=new THREE.Color();
 // Show the right parts and paint for a weapon instance (called on create and on every customization change)
 function applyWeaponConfig(w, cfg){
-  if (cfg) w.cfg=cfg; const c=w.cfg, id=w.id, on=new Set(Object.values(c.att).filter(Boolean));
+  if (cfg) w.cfg=cfg; if (w.id==='fists') return; const c=w.cfg, id=w.id, on=new Set(Object.values(c.att).filter(Boolean));
   if (id==='glock'){
     const p=w.parts, parts=new Set();
     for (const a of on){ const A=ATTACHMENTS[a]; if (A.part) parts.add(A.part); }
@@ -529,15 +526,3 @@ function makeBagModel(){
   return g;
 }
 // ---------- Backpack (kept for compatibility) ----------
-function makeBackpackModel(){
-  const g=new THREE.Group();
-  const nylon=new THREE.MeshLambertMaterial({color:'#b51f2a'}), dark=new THREE.MeshLambertMaterial({color:'#1b1b1d'}), zip=new THREE.MeshLambertMaterial({color:'#d9b13a'});
-  const add=(geo,mat,x,y,z,rx=0)=>{ const m=new THREE.Mesh(geo,mat); m.position.set(x,y,z); m.rotation.x=rx; m.castShadow=true; g.add(m); return m; };
-  add(new THREE.BoxGeometry(0.3,0.42,0.16), nylon, 0,0,0);
-  add(new THREE.CylinderGeometry(0.15,0.15,0.3,10,1,false,0,PI), nylon, 0,0.21,0, 0).rotation.z=PI/2;
-  add(new THREE.BoxGeometry(0.24,0.18,0.07), nylon, 0,-0.08,-0.11);
-  add(new THREE.BoxGeometry(0.25,0.012,0.012), zip, 0,0.01,-0.146);
-  for (const x of [-0.09,0.09]) add(new THREE.BoxGeometry(0.04,0.4,0.02), dark, x,0.02,0.09);
-  add(new THREE.BoxGeometry(0.12,0.03,0.04), dark, 0,0.27,0.02);
-  return g;
-}

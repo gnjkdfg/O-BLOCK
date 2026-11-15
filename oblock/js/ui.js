@@ -195,10 +195,10 @@ const UI = {
     $('#ql-close').onclick=()=>Game.go('pause');
     $('#ql-apply').onclick=()=>{ const q=this.qlPick||{}; Loadout.firearm=q.primary||Loadout.firearm; Loadout.secondary=q.secondary||Loadout.secondary; Loadout.melee=q.melee||Loadout.melee; saveLoadout(); for (const w of [q.melee,q.secondary,q.primary]) if (w && w!==Arsenal[WEAPON_SLOT[w]]) Arsenal.setFirearm(w); this.toast('LOADOUT UPDATED','ok'); Game.resume(); };
     this.initLoadout(); this.buildChar(); this.camButtons(); this.menuInfo();
-    Bus.on('kill',k=>{ this.killfeed(`<b>YOU</b> <span>[${k.weapon}${k.head?' · HEADSHOT':''}]</span> <em>${k.victim}</em>`); this.toast((k.head?'HEADSHOT · ':'')+'ELIMINATED '+k.victim,'kill'); });
-    Bus.on('killfeed',k=>this.killfeed(`<em>${k.killer}</em> <span>[${k.weapon}]</span> ${k.victim==='YOU'?'<b>YOU</b>':'<em>'+k.victim+'</em>'}`));
+    Bus.on('kill',k=>{ Snd.killSfx&&Snd.killSfx(); this.killfeed(`<b>YOU</b> <span>[${k.weapon}${k.head?' · HEADSHOT':''}]</span> <em>${k.victim}</em>`); this.toast((k.head?'HEADSHOT · ':'')+'ELIMINATED '+k.victim,'kill'); });
+    Bus.on('killfeed',k=>this.killfeed(k.mystery ? `${k.victim==='YOU'?'<b>YOU</b>':'<em>'+k.victim+'</em>'} <span>died</span>` : `<em>${k.killer}</em> <span>[${k.weapon}]</span> ${k.victim==='YOU'?'<b>YOU</b>':'<em>'+k.victim+'</em>'}`));
     Bus.on('hit',h=>this.hitmarker(h)); Bus.on('hurt',h=>this.hurt(h));
-    Bus.on('died',by=>{ $('#death-by').textContent='Eliminated by '+by; const R=roomRules(); $('#death .sm').textContent = R ? (R.respawnOn ? 'Respawning in '+R.respawnDelay+' s…' : 'No respawns in this room · spectating until the match ends') : 'Respawning…'; $('#death').style.display='flex'; });
+    Bus.on('died',by=>{ $('#death-by').textContent=by ? 'Eliminated by '+by : 'You died'; const R=roomRules(); $('#death .sm').textContent = R ? (R.respawnOn ? 'Respawning in '+R.respawnDelay+' s…' : 'No respawns in this room · spectating until the match ends') : 'Respawning…'; $('#death').style.display='flex'; });
     Bus.on('respawn',()=>{ $('#death').style.display='none'; });
     Bus.on('weather',on=>this.toast(on?'RAIN ROLLING IN':'THE RAIN HAS STOPPED',''));
     Bus.on('notice',t=>this.toast(t,''));
@@ -307,12 +307,12 @@ const UI = {
     $('#char-info').innerHTML=`<div class="big">${C.name}</div>${saved===CharLook.char?'<span class="sel">SELECTED</span>':''}${own?(C.price?'<span class="own">OWNED</span>':''):'<span class="lock">LOCKED · '+fmtCash(C.price)+'</span>'}
       <dl><dt>Outfit</dt><dd>${C.desc}</dd><dt>Rig</dt><dd>22 body bones + 30 finger bones</dd><dt>Clips</dt><dd>Idle, Walk (imported) · run / sprint blended from the walk, crouch, slide, vault, prone (procedural on the rig) · physics ragdoll</dd>
       <dt>Kill streak</dt><dd>5 kills: +1 NIC (all characters)</dd>
-      <dt>Ability · ${Input.label(Binds.ability)}</dt><dd>${AB?'<b style="color:#ff6a5a">'+AB.name+'</b> — '+(AB.hpMul?'max health ×'+AB.hpMul:'firearm and melee damage ×'+AB.dmgMul)+' until you die':'None'}</dd>
+      <dt>Ability · ${Input.label(Binds.ability)}</dt><dd>${AB?'<b style="color:#ff6a5a">'+AB.name+'</b> — '+(AB.hpMul?'max health ×'+AB.hpMul:AB.speedMul?'movement speed +'+Math.round((AB.speedMul-1)*100)+'%':'firearm and melee damage ×'+AB.dmgMul)+' until you die':'None'}</dd>
       ${AB?`<dt>Unlock</dt><dd>${AB.at}-kill streak (kills in a row without dying), then press ${Input.label(Binds.ability)} to activate. Dying resets the streak.</dd>`:''}</dl>
       ${own?'':`<div class="buybox"><b>BUY ${C.name} · ${fmtCash(C.price)}</b><p>You have ${ProfileAuthority.cash===Infinity?'unlimited cash':fmtCash(ProfileAuthority.cash)}. Ownership is saved to your profile.</p><button id="char-buy" class="primary">BUY</button></div>`}`;
     const cb=$('#char-buy'); if (cb) cb.onclick=()=>this.buyItem(CharLook.char, C.name, ()=>this.buildChar());
     const box=$('#char-opts'); box.innerHTML='';
-    for (const [key,label,list] of [['jacket','Jacket colour',JACKET_COLORS],['pants','Pants colour',PANTS_COLORS]]){
+    for (const [key,label,list] of (C.bareArms ? [['pants','Shorts colour',PANTS_COLORS]] : [['jacket','Jacket colour',JACKET_COLORS],['pants','Pants colour',PANTS_COLORS]])){
       const grp=el('div','opt'); grp.appendChild(el('label','',label)); const chips=el('div','chips');
       for (const [n,c] of list){ const b=el('button','chip'+(CharLook[key]===n?' on':''),`<i style="background:${c}"></i>${n}`);
         b.onclick=()=>{ CharLook[key]=n; chips.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); b.classList.add('on'); if (Stage.charRig) setLookColors(Stage.charRig, CharLook); $('#char-status').textContent='Not saved — press CONFIRM SELECTION'; };
@@ -371,13 +371,13 @@ const UI = {
   renderLoadout(){
     Stage.touch(); const L=this.lo, id=L.sel;
     // ---- left: PRIMARY / SECONDARY / EQUIPMENT tabs (one primary, one secondary, one melee: knife by default or the Taser)
-    const CAT={primary:PRIMARIES, secondary:SECONDARIES.concat('taser'), equip:['knife']}, catOf=w=>w==='knife'?'equip':PRIMARIES.includes(w)?'primary':'secondary';
+    const CAT={primary:PRIMARIES, secondary:SECONDARIES.concat('taser'), equip:['knife','fists']}, catOf=w=>isMeleeId(w)?'equip':PRIMARIES.includes(w)?'primary':'secondary';
     if (!CAT[L.cat]) L.cat=catOf(id);
     const ct=$('#lo-cats'); ct.innerHTML=''; for (const [k,t] of [['primary','PRIMARY'],['secondary','SECONDARY'],['equip','EQUIPMENT']]){ const b=el('button',L.cat===k?'on':'',t); b.onclick=()=>{ L.cat=k; const w=CAT[k].find(x=>this.equipped(x))||CAT[k][0]; L.sel=w; L.slot=null; L.pick=null; Stage.showWeapon(w); this.renderLoadout(); }; ct.appendChild(b); }
     const list=$('#lo-weapons'); list.innerHTML='';
     for (const wid of CAT[L.cat]){
       const eq=this.equipped(wid), n=attachmentCount(wid), ok=ProfileAuthority.canUse(wid), pr=ProfileAuthority.price(wid), hasAtt=WEAPON_SLOTS[wid].length>0;
-      const tag=!ok?'LOCKED · '+fmtCash(pr):eq?'EQUIPPED':wid==='knife'?'DEFAULT MELEE':'OWNED';
+      const tag=!ok?'LOCKED · '+fmtCash(pr):eq?'EQUIPPED':wid==='knife'?'DEFAULT MELEE':wid==='fists'?'FREE · REPLACES KNIFE':'OWNED';
       const b=el('button','wcard'+(L.sel===wid?' on':'')+(ok?'':' locked'), `<img src="${(this.thumbs||{})[wid]||''}" alt=""><div><b>${WEAPON_DEFS[wid].name}</b><small>${WEAPON_CATEGORY[wid]}${hasAtt?' · '+n+' attachment'+(n===1?'':'s'):''}</small><span class="eq ${eq&&ok?'':'no'}">${tag}</span></div>`);
       b.onclick=()=>{ L.sel=wid; L.slot=null; L.pick=null; Stage.showWeapon(wid); this.renderLoadout(); };
       list.appendChild(b);
@@ -392,7 +392,7 @@ const UI = {
       r.appendChild(s); eqb.appendChild(r);
     } }
     // ---- centre header
-    const isFire=id!=='knife';
+    const isFire=!isMeleeId(id);
     const okW=ProfileAuthority.canUse(id), prW=ProfileAuthority.price(id), haveC=ProfileAuthority.cash;
     const slotName={primary:'PRIMARY',secondary:'SECONDARY',melee:'MELEE'}[WEAPON_SLOT[id]], eqd=this.equipped(id);
     $('#lo-head').innerHTML=`<div class="wn">${WEAPON_DEFS[id].name}${okW?'':' <span class="lock">'+fmtCash(prW)+'</span>'}</div><div class="wc">${WEAPON_CATEGORY[id]}</div>`+
@@ -475,6 +475,7 @@ const UI = {
   buyFailed(name, why){ this.toast('CAN\'T BUY '+name.toUpperCase()+': '+String(why).toUpperCase(),'warn'); Snd.uiSfx('deny'); if (Game.state==='loadout') this.loStatus('Can\'t buy '+name+': '+why); },
   // gameplay stats used for display (all from weaponStats, the same function gameplay uses)
   statRows(d){
+    if (d.fist) return [['Jab',d.dmg,100,true,v=>v+''],['Charged punch',d.heavyDmg,200,true,v=>d.heavyMin+'–'+v],['Punch time',d.rate,1.2,false,v=>v.toFixed(2)+' s'],['Movement',4.6*d.moveMul,5.6,true,v=>v.toFixed(2)+' m/s']];
     if (d.kind==='melee') return [['Damage',d.dmg,100,true,v=>v+''],['Heavy stab',d.heavyDmg,200,true,v=>v+''],['Swing time',d.rate,1.2,false,v=>v.toFixed(2)+' s'],['Movement',4.6*d.moveMul,5.6,true,v=>v.toFixed(2)+' m/s']];
     return [
       ['Damage', d.dmg, 100, true, v=>Math.round(v)+''],
@@ -578,7 +579,6 @@ const UI = {
       seg('Crosshair','crosshair',[['none','None'],['cross','Cross'],['dotS','Dot S'],['dotM','Dot M'],['dotL','Dot L']],()=>this.xhPreview());
       { const r=box.lastChild, pv=el('div','xhprev'); pv.id='xh-prev'; r.appendChild(pv); this.xhPreview(); }
       box.appendChild(el('h3','','Practice'));
-      seg('Bots target you','botsFire',[[true,'On'],[false,'Off']]);
     } else {
       slider('Mouse sensitivity','sens',0.2,3,0.05,v=>v.toFixed(2)+'×');
       seg('Aim assist','aimAssist',[['off','Off'],['on','On']]);
@@ -661,7 +661,7 @@ const UI = {
     const ch=$('#cross'), xh=Settings.crosshair; setCssVar(ch,'--g',gap.toFixed(1)+'px');
     // dots are 2/4/6 px at 1080p, scaled with the screen height; the cross keeps its spread behaviour
     if (ch._xh!==xh || ch._h!==innerHeight){ ch._xh=xh; ch._h=innerHeight; ch.className=xh; ch.style.setProperty('--d',(({dotS:2,dotM:4,dotL:6}[xh]||2)*innerHeight/1080).toFixed(2)+'px'); }
-    setStyle(ch,'opacity', (xh==='none' || (A.adsK>0.25 && Rig.mode==='first' && d.kind!=='melee') || Perks.nic || P.smoking || P.using || Rig.scoped || Rig.optic || (A.adsK>0.6 && Rig.mode==='first' && d.kind!=='melee') || !P.alive || P.inCar) ? '0' : '1');
+    setStyle(ch,'opacity', (xh==='none' || (A.adsK>0.25 && Rig.mode==='first' && d.kind!=='melee') || Perks.nic || P.smoking || P.using || Rig.scoped || Rig.optic || (A.adsK>0.6 && Rig.mode==='first' && d.kind!=='melee') || !P.alive || P.inCar || P.seated || (Arena.on && Arena.watch)) ? '0' : '1');
     setStyle($('#scope'),'display', Rig.scoped ? 'block' : 'none'); { const th=Thermal.active(), sc=$('#scope'); if (sc._th!==th){ sc._th=th; sc.classList.toggle('therm', th); } }
     // 2.5x: full-screen scope picture once fully aimed in (the 3D scope is shown during the transition)
     const ov = Rig.optic && A.def.attachments && A.def.attachments.includes('scope25') ? clamp((A.adsK-0.82)/0.16,0,1) : 0;
@@ -691,7 +691,7 @@ const UI = {
     $('#st-fill').style.width=(staminaK()*100)+'%'; $('#st-fill').style.background=P.exhausted?'#e05a40':StreakAuthority.nicOn('player')?'#e6a0c0':'#7cc3e8';
     this.progHUD();
     const st=[]; if (P.exhausted) st.push(['EXHAUSTED','bad']); if (Equip.flashK>0.05) st.push(['FLASHED','bad']); if (P.smoking) st.push(['SMOKING','']); if (P.carrying) st.push(['CARRYING THE BAG','obj']);
-    if (P.prone && Rig.proneK>0.8) st.push(['PRONE','']); else if (P.crouch && PlayerChar.rig && PlayerChar.rig.modelY<-0.24) st.push(['CROUCHED','']);
+    if (P.prone && Rig.proneK>0.8) st.push(['PRONE','']); else if (P.crouch && !P.seated && PlayerChar.rig && PlayerChar.rig.modelY<-0.24) st.push(['CROUCHED','']);
     if (P.riding) st.push([P.riding.S.name+(Rides.steerLocked()?' · STEERING LOCKED':''),'']);
     if (P.bluntCap) st.push(['MAX HP +20%','good']);
     if (Effects.zyn>0) st.push(['ZYN +50% ACCURACY '+Math.ceil(Effects.zyn)+'s','good']);
@@ -714,6 +714,7 @@ const UI = {
         if (box._ic!==ab.A.id){ box.querySelector('.ic').innerHTML=ic; box._ic=ab.A.id; }
         box.querySelector('b').textContent=ab.A.name;
         box.querySelector('small').textContent = ab.active ? 'ACTIVE · UNTIL YOU DIE' : ab.ready ? 'READY · PRESS '+Input.label(Binds.ability) : 'KILL STREAK '+ab.streak+' / '+ab.A.at; } }
+    setStyle($('#equip'),'display', Arena.on ? 'none' : 'flex');   // Run That Fade: fists only, no equipment
     $('#status').innerHTML=st.map(s=>`<i class="${s[1]}">${s[0]}</i>`).join('');
     $('#wname').innerHTML=d.name+(A.cur==='glock'?` <span class="mode ${A.glockAuto?'auto':''}">${A.glockAuto?'SWITCH · AUTO':'SEMI'}</span>`:'');
     $('#ammo').innerHTML = a ? `<b class="${a.mag===0?'empty':a.mag<=Math.ceil(d.mag*0.25)?'low':''}">${a.mag}</b><span>/ ${a.res}</span>` : '<b>—</b>';
@@ -745,14 +746,16 @@ const UI = {
     else if (P.slide) t='';
     else if (!P.anim && !P.search && !P.smoking){
       const v=nearVault(), lad=nearLadder(), pk=Pickups.near(), srch=nearestSearchable(), K=Input.label(Binds.interact);
-      if (Mode.nearBackpack()) t=`<b>${K}</b> pick up the BAG`;
+      if (Arena.on && Arena.seat) t=''; else if (Arena.on && !Arena.fighter() && Arena.nearSeat()) t=`<b>${K}</b> sit and watch`;
+      else if (Mode.nearBackpack()) t=`<b>${K}</b> pick up the BAG`;
       else if (pk>=0){ const p=Pickups.list[pk]; t=`<b>${K}</b> pick up ${WEAPON_DEFS[p.type].name} ammo${p.type!==A.firearm?' (converts)':''}`; }
       else if (v) t=`<b>${Input.label(Binds.jump)}</b> climb over fence`; else if (lad) t=`<b>${K}</b> `+(lad.top?'climb down ladder':'climb ladder');
       else if (Rides.near()) t=`<b>${K}</b> ride the ${Rides.near().S.name.toLowerCase()}`; else if (srch) t=`<b>${K}</b> search the trunk`;
       else if (a && a.mag===0 && a.res===0) t='Out of ammo — use the knife or find ammo'; else if (a && a.mag===0) t=`<b>${Input.label(Binds.reload)}</b> reload`; }
     const pr=$('#prompt'); if (pr._t!==t){ pr._t=t; pr.innerHTML=t; pr.style.display=t?'block':'none'; }
+    { const fc=$('#fistcharge'), k=Fists.chargeK(); if (fc){ const on=Fists.active()&&k>0; if (fc._on!==on){ fc._on=on; fc.style.display=on?'block':'none'; } if (on){ const v=Math.round(k*100); if (fc._v!==v){ fc._v=v; fc.firstChild.style.width=v+'%'; fc.classList.toggle('full', k>=1); } } } }
     $('#fps').style.display = Settings.showFps ? 'block' : 'none';
-    $('#mini').style.display = Settings.minimap ? 'block' : 'none'; $('#killfeed').style.top = Settings.minimap ? '' : '12px';
+    $('#mini').style.display = Settings.minimap && !Arena.on ? 'block' : 'none'; $('#killfeed').style.top = Settings.minimap ? '' : '12px';
     if (Settings.minimap){ this.mmT=(this.mmT||0)+dt; if (!Perf.potato || this.mmT>0.1){ this.mmT=0; drawMinimap(); } }   // potato: minimap at 10 Hz
   },
   // end-of-match rewards (computed and paid once by ProfileAuthority / the server)

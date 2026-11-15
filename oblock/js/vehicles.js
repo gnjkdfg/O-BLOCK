@@ -68,7 +68,7 @@ const Rides = {
   startSound(){ if (!this.snd) this.snd=Snd.play('scooter_loop',{cat:'vehicles', vol:0.0, loop:true, max:1}); },
   stopSound(){ if (this.snd){ Snd.stop(this.snd,0.2); this.snd=null; } },
   // steering is locked while firing
-  steerLocked(){ return Arsenal.trigger && Arsenal.cur!=='knife' && Arsenal.canFire(); },
+  steerLocked(){ return Arsenal.trigger && !isMeleeId(Arsenal.cur) && Arsenal.canFire(); },
   // ---- online: the server's answer to get on/off, and every vehicle's live position from the snapshots
   netRide(m){
     const v=this.byId(m.id); if (!v) return;
