@@ -111,7 +111,7 @@ const ACTIONS = [
 ];
 // groups for the control guide / settings
 const ACTION_GROUPS = { Movement:['forward','back','left','right','jump','sprint','crouch','slide','prone','leanL','leanR'], Combat:['fire','aim','block','reload','firearm','knife','firemode','grenade','mine','flashlight','thermal'], Interaction:['interact','smoke','beer','zyn','nic','ability'], Interface:['camera','scoreboard','loadout','pause'] };
-const GAME_VERSION = 'v0.10.2';
+const GAME_VERSION = 'v0.10.3';
 /* Map compression (Update 5): the block in the middle (|x|,|z| <= MAP_CORE: towers A-D, courtyard, ring road) stays where
    it is; everything outside it is pulled toward the centre by MAP_K. Only the ANCHOR of each object (its centre, or both
    ends of a fence / wall / road) is moved — object sizes never change. Applied once, at map build time. */

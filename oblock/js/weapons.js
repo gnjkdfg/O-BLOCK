@@ -21,12 +21,12 @@ const WEAPON_DEFS = {
            spreadHip:0.06, spreadAds:0.0, spreadMove:0.018,
            recoil:{p:0.07, y:0.01, kick:2}, recover:3, reloadTime:3.1, insertAt:0.7, adsZoom:0.2, adsTime:0.3, sound:'sniper', moveMul:0.88, flash:1.3, scope:true},
   // AR-15 (imported model): the best all-rounder — fast, flat-shooting, accurate; slightly less damage per round than the Drako
-  ar15:   {name:'AR-15', kind:'auto', mag:30, reserve:150, rpm:720, dmg:26, headMul:2.0, range:260, falloff:[80,200,0.8],
+  ar15:   {name:'AR-15', kind:'auto', mag:30, reserve:150, rpm:600, dmg:34, headMul:2.0, range:260, falloff:[80,200,0.8],
            spreadHip:0.026, spreadAds:0.004, spreadMove:0.02,
            recoil:{p:0.0125, y:0.0055, kick:0.85, pattern:[0,0.3,-0.25,0.4,-0.35,0.15,0.45,-0.4,-0.1,0.3]}, recover:7,
            reloadTime:2.3, insertAt:0.6, adsZoom:0.74, adsTime:0.15, sound:'ar15', moveMul:0.97, flash:1.1},
   // MP7 (imported model, $3,000): fast-firing SMG. Strong close / mid, falls off past 30 m; 30-round mag (40 extended)
-  mp7:    {name:'MP7', kind:'auto', mag:30, reserve:150, rpm:900, dmg:19, headMul:1.8, range:110, falloff:[20,65,0.5],
+  mp7:    {name:'MP7', kind:'auto', mag:30, reserve:150, rpm:800, dmg:19, headMul:1.8, range:110, falloff:[20,65,0.5],
            spreadHip:0.02, spreadAds:0.0055, spreadMove:0.015,
            recoil:{p:0.0105, y:0.006, kick:0.75, pattern:[0,0.35,-0.3,0.45,-0.4,0.25,0.5,-0.45,-0.15,0.35]}, recover:8,
            reloadTime:2.0, insertAt:0.65, adsZoom:0.8, adsTime:0.12, sound:'mp7', moveMul:1.0, flash:0.9},
@@ -71,12 +71,12 @@ const ATTACHMENTS = {
   compensator:{name:'Compensator', cat:'muzzle', for:['drako','glock','ar15'], part:'comp', desc:'Hides muzzle flash, −15% damage.', pros:['No muzzle flash (no light, harder to spot)','Recoil -12%'], cons:['Damage -15%'], mods:{noFlash:true, dmg:-0.15, recoil:-0.12}},
   laser:      {name:'Laser', cat:'other', for:['drako','glock','sniper','ar15','shotgun','sawedoff','mp7'], part:'laser', desc:'Visible beam that tightens hip-fire.', pros:['Hip-fire spread -40%'], cons:['Beam shows where you aim'], mods:{hip:-0.40, laser:true}},
   flashlight: {name:'Flashlight', cat:'other', for:['glock'], part:'flashlight', desc:'Bright light that dazzles close targets.', pros:['Bots within 20 m you aim at lose 30% accuracy'], cons:['ADS speed -3%'], mods:{glare:true, ads:-0.03}},
-  mag_std:    {name:'Standard mag', cat:'mag', for:['glock','mp7'], part:'mag_std', desc:'Factory magazine: Glock 17 · MP7 30 rounds.', pros:['Fastest reload'], cons:[], mods:{cap:{glock:17, mp7:30}}},
+  mag_std:    {name:'Standard mag', cat:'mag', for:['glock','mp7','ar15'], part:'mag_std', desc:'Factory magazine: Glock 17 · MP7 30 · AR-15 30 rounds.', pros:['Fastest reload'], cons:[], mods:{cap:{glock:17, mp7:30, ar15:30}}},
   mag_ext:    {name:'Extended mag', cat:'mag', for:['glock','mp7'], part:'mag_ext', desc:'Longer magazine: Glock 31 · MP7 40 rounds.', pros:['+14 rounds (Glock) · +10 rounds (MP7)'], cons:['Reload +10%','Movement speed -3%'], mods:{cap:{glock:31, mp7:40}, reload:0.10, move:-0.03}},
-  mag_drum:   {name:'Drum mag', cat:'mag', for:['glock'], part:'mag_drum', desc:'50 rounds.', pros:['+33 rounds'], cons:['Reload +30%','Movement speed -8%','ADS speed -10%'], mods:{cap:50, reload:0.30, move:-0.08, ads:-0.10}},
+  mag_drum:   {name:'Drum mag', cat:'mag', for:['glock','ar15'], part:'mag_drum', desc:'50 rounds.', pros:['50 rounds (Glock +33 · AR-15 +20)'], cons:['Reload +30%','Movement speed -8%','ADS speed -10%'], mods:{cap:50, reload:0.30, move:-0.08, ads:-0.10}},
 };
 const SLOT_LABELS = {optic:'Optics', under:'Underbarrel', stock:'Stock', muzzle:'Muzzle', other:'Other', mag:'Magazine'};
-const WEAPON_SLOTS = { drako:['optic','under','muzzle','other'], glock:['optic','under','stock','muzzle','other','mag'], sniper:['muzzle','other'], ar15:['optic','muzzle','other'], mp7:['under','other','mag'], shotgun:['other'], sawedoff:['other'], taser:[], knife:[], fists:[] };
+const WEAPON_SLOTS = { drako:['optic','under','muzzle','other'], glock:['optic','under','stock','muzzle','other','mag'], sniper:['muzzle','other'], ar15:['optic','muzzle','other','mag'], mp7:['under','other','mag'], shotgun:['other'], sawedoff:['other'], taser:[], knife:[], fists:[] };
 const SLOT_DEFAULT = { optic:'iron', mag:'mag_std' };          // slots that cannot be empty
 const WEAPON_CATEGORY = { drako:'Compact rifle', glock:'Pistol', sniper:'Bolt-action rifle', ar15:'Assault rifle', mp7:'Submachine gun', shotgun:'Pump shotgun', sawedoff:'Sawed-off · secondary', taser:'Stun gun · replaces the knife', knife:'Melee · default', fists:'Hand to hand · replaces the knife' };
 const PAINT = {
@@ -316,7 +316,7 @@ function buildDrako(){
 // Imported long guns (AR-15 / shotgun): meshes copied into one group with cloned materials; the magazine and the iron sights
 // are kept as their own groups (mag drops on reload, irons are hidden under an optic)
 const GUN_SPEC = {
-  ar15:   {muzzle:[0,0.07,-0.41], sight:[0,0.099,-0.06], eye:0.3, support:[0,0.0,-0.255], railY:0.095, magRe:/mag/i, ironRe:/ironsight/i},
+  ar15:   {muzzle:[0,0.07,-0.41], sight:[0,0.099,-0.06], eye:0.3, support:[0,0.0,-0.255], railY:0.095, magRe:/^mag$/, ironRe:/ironsight/i, drum:true},
   shotgun:{muzzle:[0,0.071,-0.845], sight:[0,0.106,-0.14], eye:0.38, support:[0,0.02,-0.36], railY:null, magRe:null, ironRe:null},
   sawedoff:{muzzle:[0,0.043,-0.53], sight:[0,0.066,-0.12], eye:0.32, support:[0,0.012,-0.27], railY:null, magRe:null, ironRe:null},
   // MP7: sight = tip of the front post; adsRot tilts the gun so the post sits centred in the rear notch (eye on that line)
@@ -335,6 +335,15 @@ function buildImportedGun(id){
     let isMag=false, isExt=false; for (let p=o; p; p=p.parent){ if (S.magRe && S.magRe.test(p.name)) isMag=true; if (S.magExtRe && S.magExtRe.test(p.name)) isExt=true; } if (S.magRe && S.magRe.test(m0.name)) isMag=true;
     if (isExt) magExt.add(mesh); else if (isMag) mag.add(mesh); else if (S.ironRe && S.ironRe.test(m0.name)) irons.add(mesh); else G.add(mesh); });
   const dk=wmat('#111',0.6,0.4), blk=wmat('#202123',0.45,0.55), att={};
+  if (S.drum && mag.children.length){   // 50-round drum: a short feed neck in the magwell and a round drum under it (shown instead of the stick mag)
+    const b=new THREE.Box3().setFromObject(mag), c=b.getCenter(new V3()), sz=b.getSize(new V3()), poly=wmat('#151618',0.75,0.1), top=b.max.y-0.012;
+    const neckH=Math.min(0.07, sz.y*0.45), R=0.06, W=Math.max(0.07, sz.x*2.6), cy0=top-neckH-R*0.82, cz=c.z+0.012;
+    add(bx(sz.x*0.96, neckH, Math.min(sz.z,0.07)), poly, c.x, top-neckH/2, c.z, 0,0,0, magExt);                 // feed neck
+    add(cy(R, R, W, 18), poly, c.x, cy0, cz, 0,0,PI/2, magExt);                                                // drum body (axis side to side)
+    for (const sd of [-1,1]){ add(cy(R*0.78, R*0.78, 0.006, 18), dk, c.x+sd*(W/2+0.002), cy0, cz, 0,0,PI/2, magExt);   // end caps
+      add(cy(0.012, 0.012, 0.01, 8), blk, c.x+sd*(W/2+0.007), cy0, cz, 0,0,PI/2, magExt); }                     // winding keys
+    for (let k=-2;k<=2;k++) add(cy(R+0.002, R+0.002, 0.004, 18), dk, c.x+k*W*0.19, cy0, cz, 0,0,PI/2, magExt);  // ribs
+  }
   const mk=(name,fn)=>{ const g=new THREE.Group(); g.name=name; fn(g); g.visible=false; G.add(g); att[name]=g; return g; };
   const mz=S.muzzle;
   if (S.railY!==null){
@@ -472,7 +481,7 @@ function applyWeaponConfig(w, cfg){
     const scoped=on.has('scope15')||on.has('scope25'); if (w.parts.irons) w.parts.irons.visible=!scoped;
     if (scoped){ const T=ADS_TUNE[on.has('scope15')?'scope15':'scope25'], dy=(S.railY||0.113)-0.113; w.sight=new V3(T.sight[0],T.sight[1]+dy,T.sight[2]); w.adsDist=T.eye; w.adsRot=T.rot; w.optic=T.overlay?'overlay':'3d'; }
     else { w.sight=new V3(...S.sight); w.adsDist=S.eye; w.adsRot=S.adsRot||[0,0,0]; w.optic=null; }
-    if (S.magExtRe){ const ext=c.att.mag==='mag_ext'; w.parts.magStd.visible=!ext; w.parts.magExt.visible=ext; w.parts.mag=ext?w.parts.magExt:w.parts.magStd; w.parts.mag.userData.y0=0; }
+    if (S.magExtRe || S.drum){ const ext=c.att.mag===(S.drum?'mag_drum':'mag_ext'); w.parts.magStd.visible=!ext; w.parts.magExt.visible=ext; w.parts.mag=ext?w.parts.magExt:w.parts.magStd; w.parts.mag.userData.y0=0; }
     w.vgripOn=!!(S.vgrip && on.has('vgrip')); w.support = w.vgripOn ? new V3(S.vgrip[0], S.vgrip[1]-0.05, S.vgrip[2]) : new V3(...S.support);
     const mz=new V3(...S.muzzle); w.muzzle = on.has('suppressor') ? mz.clone().add(new V3(0,0,-0.18)) : on.has('compensator') ? mz.clone().add(new V3(0,0,-0.045)) : mz;
     w.laserFrom = S.laser ? new V3(S.laser[0],S.laser[1],S.laser[2]-0.03) : new V3(0.03,S.muzzle[1]-0.005,S.support[2]-0.075);
