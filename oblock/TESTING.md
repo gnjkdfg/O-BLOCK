@@ -1,3 +1,14 @@
+# O-Blick v0.10.3 — hit rejection fix, MP7 / AR-15 changes
+
+- ✅ Online hits no longer thrown away as "too fast": the server checked fire rate on its 20-per-second match clock, so two honest MP7 shots often looked 0 ms apart. It now uses the real clock with a 3-shot burst allowance for network jitter; the long-run rate still can't exceed the gun's RPM. Measured online, full magazine at another player: old server rejected 14/30 MP7 shots and 5/30 AR-15 shots, new server 0/30 for both
+- ✅ Shot origin check widened (2.5 → 3.5 m) so sprinting with some ping doesn't get shots refused
+- ✅ MP7 900 → 800 RPM
+- ✅ AR-15 720 → 600 RPM, 26 → 34 damage; new Magazine slot: Standard (30) or the 50-round Drum mag (same purchase as the Glock drum, $300, server-checked capacity)
+- Fixed: the AR-15's iron sights were part of its "magazine" (a material name contained "mag"), so they moved with the magazine on reload
+- Tests: server 138/138 (new: bunched honest fire accepted, 8 shots at once rejected); browser: 2-player online full-mag test on old vs new server, AR-15 drum preview, 50-round capacity, no page errors
+
+---
+
 # O-Blick v0.10.2 — mod menu: give, mysterious kills; body fix
 
 - ✅ Mod menu GIVE (online, in your private match, developer sign-in checked by the server): pick a player (or yourself) and give cash ($1–1,000,000, saved to their profile), any unlock (characters, guns, Switch, attachments), beer / blunt / zyn, flashbangs, mines or an ammo refill; they get a "YOU RECEIVED …" message; every gift is logged
