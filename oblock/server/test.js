@@ -77,9 +77,15 @@ function client(token, extra){
     B.send({ t:'equip', w:'glock' }); const le = await B.next('reject', m => m.what === 'equip', 400); ok(!le, 'free guns: switching to the Glock at level 1 is accepted'); await sleep(300);
     B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[{ id:wa.id, head:false, d:10 }] }); const h1 = await A.next('hit');
     ok(h1 && h1.target === wa.id && h1.dmg === S.weapons.glock.dmg, 'valid Glock body shot: damage is the server table value (' + S.weapons.glock.dmg + ')', h1);
-    B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[{ id:wa.id, head:false, d:10 }] }); const tf = await B.next('reject', m => m.what === 'shot');
-    ok(tf && /too fast/.test(tf.why), 'firing faster than the weapon allows is rejected');
-    await sleep(250);
+    { // honest fire that arrives bunched up (network jitter) is accepted; a sustained rate above the gun's RPM is not
+      const iv = 60 / S.weapons.glock.rpm; await sleep(iv * 4000); B.drain('reject');
+      for (let k = 0; k < 4; k++){ B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[] }); B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[] }); await sleep(iv * 2000 + 15); }
+      await sleep(200); ok(!B.drain('reject').some(m => /too fast/.test(m.why)), 'shots at the real fire rate that arrive two at a time are all accepted');
+      await sleep(iv * 4000); B.drain('reject');
+      for (let k = 0; k < 8; k++) B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[] });
+      const tf = await B.next('reject', m => m.what === 'shot' && /too fast/.test(m.why));
+      ok(tf, 'firing faster than the weapon allows is rejected (8 shots at once)'); await sleep(300); B.drain('reject'); }
+    B.send({ t:'reload' }); await sleep(S.weapons.glock.reloadTime * 1000 + 400 + (60 / S.weapons.glock.rpm) * 4000);
     B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[{ id:wa.id, head:true, d:55 }] }); const lie = await B.next('reject', m => m.what === 'hits');
     ok(!!lie, 'a hit claimed at the wrong distance is rejected');
     await sleep(250);
@@ -88,7 +94,7 @@ function client(token, extra){
     ok(!!wall, 'a hit through Building C is rejected (line of sight against the map colliders)');
     await sleep(250);
     B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[{ id:wa.id, head:false, d:10 }] }); const om = await B.next('reject', m => m.what === 'shot');
-    ok(om && /origin/.test(om.why), 'a shot from somewhere the player is not is rejected');
+    ok(om && /origin/.test(om.why), 'a shot from somewhere the player is not is rejected', om);
     put(B, [-7, 0, -12]); await sleep(150);
     // empty the magazine: the server counts rounds
     let empty = null; for (let i = 0; i < 20 && !empty; i++){ B.send({ t:'shot', w:'glock', o:[-7,0,-12], hits:[] }); empty = await B.next('reject', m => m.what === 'shot' && /empty/.test(m.why), 140); }

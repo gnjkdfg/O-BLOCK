@@ -406,11 +406,18 @@ function validateShot(room, shooter, m){
   else {
     const auto = m.w === 'glock' && m.auto; if (auto && shooter.kind === 'player' && !shooter.owner.profile.owned.switch) return 'switch not owned';
     if (auto && room.settings.mode === 'backpack') return 'switch disabled in this mode';
-    const iv = 60 / (auto ? W.switchRpm : W.rpm); if (now - shooter.lastShot < iv * 0.7) return 'too fast';
+    // fire rate: checked on the real clock (the match clock only moves in 50 ms ticks, so two honest MP7 shots often
+    // looked 0 ms apart) and with a burst allowance, because shots can arrive bunched up after network jitter. The
+    // long-run rate still can't go above the gun's RPM (+8%): an auto-clicker or rate hack runs out of allowance in a few shots.
+    const iv = 60 / (auto ? W.switchRpm : W.rpm), real = performance.now() / 1000, burst = 3;
+    const tat = Math.max(shooter.fireTat || 0, real);
+    if (tat - real > burst * iv) return 'too fast';
+    m._tat = tat + iv * 0.92;                                // committed only if the whole shot is valid
     if (shooter.reloadUntil) return 'reloading';
     if (shooter.mag <= 0) return 'empty';
   }
-  const o = m.o; if (!Array.isArray(o) || Math.hypot(o[0]-shooter.pos[0], o[2]-shooter.pos[2]) > 2.5) return 'origin mismatch';
+  const o = m.o; if (!Array.isArray(o) || Math.hypot(o[0]-shooter.pos[0], o[2]-shooter.pos[2]) > 3.5) return 'origin mismatch';   // room for a sprinting player's latency
+  if (m._tat) shooter.fireTat = m._tat;
   return null;
 }
 function applyShot(room, shooter, m){
